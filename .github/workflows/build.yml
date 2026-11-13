@@ -1,0 +1,12 @@
+name: build
+on: [push, workflow_dispatch]
+jobs:
+  b:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: dotnet build ThaiMoves.csproj -c Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThaiMoves
+          path: bin/Release/net48/ThaiMoves.dll
