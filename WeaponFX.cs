@@ -18,22 +18,28 @@ public class WeaponFX : Script
         public Fx(string l, string a, string n) { Label = l; Asset = a; Name = n; }
     }
 
-    // เอฟเฟกต์บนอาวุธ (วนต่อเนื่อง) เป็นภาพล้วนๆ ไม่มีดาเมจ
+    // เอฟเฟกต์บนอาวุธ (วนต่อเนื่อง) เป็นพาร์ติเคิลภาพล้วนๆ ไม่มีดาเมจ
     static readonly Fx[] WeaponList = {
         new Fx("OFF", "", ""),
-        new Fx("Electric Sparks", "core", "ent_amb_sparking_wires"),
+        new Fx("Fire", "core", "ent_ray_heli_aprtmnt_l_fire"),
+        new Fx("Thermite Flame", "scr_ornate_heist", "scr_heist_ornate_thermal_burn"),
         new Fx("Steam", "core", "ent_sht_steam"),
+        new Fx("Electric Sparks", "core", "ent_amb_sparking_wires"),
+        new Fx("Toxic Smoke", "core", "exp_grd_bzgas_smoke"),
         new Fx("Firework Fountain", "scr_indep_fireworks", "scr_indep_firework_fountain"),
     };
 
-    // เอฟเฟกต์ตอนโจมตีโดน (ครั้งเดียว) เป็นภาพล้วนๆ ไม่มีดาเมจ
+    // เอฟเฟกต์ตอนโจมตีโดน (ครั้งเดียว) เป็นพาร์ติเคิลภาพล้วนๆ ไม่มีดาเมจ
     static readonly Fx[] HitList = {
         new Fx("OFF", "", ""),
+        new Fx("Explosion (visual)", "core", "exp_grd_grenade"),
+        new Fx("Fireball (visual)", "scr_trevor1", "scr_trev1_trailer_boosh"),
+        new Fx("Blood (visual)", "scr_solomon3", "scr_trev4_747_blood_impact"),
         new Fx("Sparks", "core", "ent_sht_electrical_box"),
         new Fx("Steam Puff", "core", "ent_sht_steam"),
+        new Fx("Toxic Smoke Puff", "core", "exp_grd_bzgas_smoke"),
         new Fx("Firework Burst", "scr_indep_fireworks", "scr_indep_firework_shotburst"),
         new Fx("Firework Star", "scr_indep_fireworks", "scr_indep_firework_starburst"),
-        new Fx("Blood (visual)", "scr_solomon3", "scr_trev4_747_blood_impact"),
         new Fx("Clown Puff", "scr_rcbarry2", "scr_clown_appears"),
     };
 
@@ -54,7 +60,8 @@ public class WeaponFX : Script
 
     // เอฟเฟกต์บนอาวุธที่กำลังเล่น
     int fxHandle, fxEntity, fxIdxApplied = -1, fxScaleApplied = -1;
-    bool weaponFail;
+    int failUntil;
+    bool failMsgShown;
 
     int nextHit, nextMelee, nextLoad;
 
@@ -150,10 +157,10 @@ public class WeaponFX : Script
         fxScaleApplied = -1;
     }
 
-    // ---------- เอฟเฟกต์บนอาวุธ (ติดที่ตัวอาวุธเท่านั้น) ----------
-    void UpdateWeaponFx(Ped p)
+    // ---------- เอฟเฟกต์บนอาวุธ (ติดที่ตัวอาวุธ อยู่ตลอด) ----------
+    void UpdateWeaponFx(Ped p, int now)
     {
-        if (weaponIdx == 0 || p.IsInVehicle() || p.IsDead)
+        if (weaponIdx == 0 || p.IsDead)
         {
             StopWeaponFx();
             return;
@@ -161,24 +168,19 @@ public class WeaponFX : Script
 
         // ตัวอาวุธในมือ ถ้าไม่มี (เช่น มือเปล่า) = ไม่แสดงเอฟเฟกต์
         int ent = Function.Call<int>(Hash.GET_CURRENT_PED_WEAPON_ENTITY_INDEX, p, 0);
-        if (ent == 0 || !Function.Call<bool>(Hash.DOES_ENTITY_EXIST, ent))
+        if (ent == 0 || ent == p.Handle || !Function.Call<bool>(Hash.DOES_ENTITY_EXIST, ent))
         {
             StopWeaponFx();
             return;
         }
 
-        // ถ้าได้ตัวคนมาแทนตัวอาวุธ ห้ามติดเด็ดขาด
-        if (ent == p.Handle)
-        {
-            StopWeaponFx();
-            return;
-        }
-
+        // เอฟเฟกต์ยังเล่นอยู่และตรงกับที่เลือก = ไม่ต้องทำอะไร
         if (fxHandle != 0 && ent == fxEntity && fxIdxApplied == weaponIdx && fxScaleApplied == weaponScaleIdx
             && Function.Call<bool>(Hash.DOES_PARTICLE_FX_LOOPED_EXIST, fxHandle))
             return;
 
-        if (weaponFail) return;
+        // ติดไม่สำเร็จเมื่อกี้ รอสักพักค่อยลองใหม่
+        if (now < failUntil) return;
 
         StopWeaponFx();
 
@@ -192,8 +194,12 @@ public class WeaponFX : Script
         if (fxHandle == 0 || !Function.Call<bool>(Hash.DOES_PARTICLE_FX_LOOPED_EXIST, fxHandle))
         {
             fxHandle = 0;
-            weaponFail = true;
-            Msg("Weapon effect unavailable: " + f.Label);
+            failUntil = now + 5000;
+            if (!failMsgShown)
+            {
+                failMsgShown = true;
+                Msg("Weapon effect unavailable: " + f.Label);
+            }
             return;
         }
 
@@ -215,7 +221,7 @@ public class WeaponFX : Script
 
     void UpdateHitFx(Ped p, int now)
     {
-        if (hitIdx == 0 || p.IsInVehicle()) return;
+        if (hitIdx == 0) return;
 
         uint w = Function.Call<uint>(Hash.GET_SELECTED_PED_WEAPON, p);
         uint grp = Function.Call<uint>(Hash.GET_WEAPONTYPE_GROUP, w);
@@ -257,7 +263,8 @@ public class WeaponFX : Script
         if (sel == 0)
         {
             weaponIdx = (weaponIdx + dir + WeaponList.Length) % WeaponList.Length;
-            weaponFail = false;
+            failUntil = 0;
+            failMsgShown = false;
             Request(WeaponList[weaponIdx].Asset);
         }
         else if (sel == 1)
@@ -281,97 +288,4 @@ public class WeaponFX : Script
         switch (i)
         {
             case 0: return "Weapon Effect:  < " + WeaponList[weaponIdx].Label + " >";
-            case 1: return "Weapon Scale:  < x" + Scales[weaponScaleIdx].ToString("0.00") + " >";
-            case 2: return "Hit Effect:  < " + HitList[hitIdx].Label + " >";
-            case 3: return "Hit Scale:  < x" + Scales[hitScaleIdx].ToString("0.00") + " >";
-            default: return rows[i];
-        }
-    }
-
-    void DrawMenu()
-    {
-        int n = rows.Length;
-        float h = 0.09f + n * 0.036f;
-        Function.Call(Hash.DRAW_RECT, 0.83f, 0.28f + h / 2f - 0.02f, 0.30f, h, 0, 0, 0, 185);
-        DrawText("WEAPON EFFECTS", 0.70f, 0.255f, 0.5f, 255, 255, 255, 255);
-
-        for (int i = 0; i < n; i++)
-        {
-            bool on = (i == sel);
-            DrawText(RowText(i), 0.70f, 0.30f + i * 0.036f, 0.4f,
-                255, on ? 220 : 255, on ? 0 : 255, 255);
-        }
-        DrawText("Left/Right = change   Enter = select   F2 = close", 0.70f, 0.30f + n * 0.036f + 0.005f, 0.3f, 200, 200, 200, 255);
-    }
-
-    // ---------- ลูปหลัก ----------
-    void OnTick(object sender, EventArgs e)
-    {
-        try { Tick2(); }
-        catch (Exception) { }
-    }
-
-    void Tick2()
-    {
-        Ped p = Game.Player.Character;
-
-        bool kMenu = Pressed(MenuKey);
-        bool kUp = Pressed(KUp), kDown = Pressed(KDown), kLeft = Pressed(KLeft), kRight = Pressed(KRight);
-        bool kEnter = Pressed(KEnter), kBack = Pressed(KBack);
-
-        if (p == null || !p.Exists() || p.IsDead)
-        {
-            StopWeaponFx();
-            menuOpen = false;
-            return;
-        }
-
-        int now = Game.GameTime;
-
-        // โหลดไฟล์เอฟเฟกต์ไว้ล่วงหน้าตลอด
-        if (now >= nextLoad)
-        {
-            nextLoad = now + 1000;
-            Request(WeaponList[weaponIdx].Asset);
-            Request(HitList[hitIdx].Asset);
-        }
-
-        if (kMenu)
-        {
-            menuOpen = !menuOpen;
-            sel = 0;
-        }
-
-        if (menuOpen)
-        {
-            Function.Call(Hash.DISABLE_ALL_CONTROL_ACTIONS, 0);
-
-            int n = rows.Length;
-            if (kUp || PadJust(172)) sel = (sel + n - 1) % n;
-            if (kDown || PadJust(173)) sel = (sel + 1) % n;
-            if (kLeft || PadJust(174)) Change(-1);
-            if (kRight || PadJust(175)) Change(1);
-            if (kBack || PadJust(202)) menuOpen = false;
-
-            if (kEnter || PadJust(201))
-            {
-                if (sel == 4)
-                {
-                    weaponIdx = 0;
-                    hitIdx = 0;
-                    Save();
-                    Msg("All effects OFF");
-                }
-                else if (sel == 5)
-                {
-                    menuOpen = false;
-                }
-            }
-
-            if (menuOpen) DrawMenu();
-        }
-
-        UpdateWeaponFx(p);
-        UpdateHitFx(p, now);
-    }
-}
+            case 1: return "Weapon Scale:  
