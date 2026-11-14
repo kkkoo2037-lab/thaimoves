@@ -18,31 +18,26 @@ public class WeaponFX : Script
         public Fx(string l, string a, string n) { Label = l; Asset = a; Name = n; }
     }
 
-    // เอฟเฟกต์บนอาวุธ (แบบวนต่อเนื่อง) เพิ่ม/แก้ได้: Fx("ชื่อ", "asset", "ชื่อเอฟเฟกต์")
+    // เอฟเฟกต์บนอาวุธ (วนต่อเนื่อง) เป็นภาพล้วนๆ ไม่มีดาเมจ
     static readonly Fx[] WeaponList = {
         new Fx("OFF", "", ""),
-        new Fx("Fire", "core", "ent_ray_heli_aprtmnt_l_fire"),
-        new Fx("Thermite Flame", "scr_ornate_heist", "scr_heist_ornate_thermal_burn"),
-        new Fx("Steam", "core", "ent_sht_steam"),
         new Fx("Electric Sparks", "core", "ent_amb_sparking_wires"),
-        new Fx("Toxic Smoke", "core", "exp_grd_bzgas_smoke"),
+        new Fx("Steam", "core", "ent_sht_steam"),
         new Fx("Firework Fountain", "scr_indep_fireworks", "scr_indep_firework_fountain"),
     };
 
-    // เอฟเฟกต์ตอนโจมตีโดน (แบบครั้งเดียว)
+    // เอฟเฟกต์ตอนโจมตีโดน (ครั้งเดียว) เป็นภาพล้วนๆ ไม่มีดาเมจ
     static readonly Fx[] HitList = {
         new Fx("OFF", "", ""),
-        new Fx("Explosion", "core", "exp_grd_grenade"),
-        new Fx("Fireball", "scr_trevor1", "scr_trev1_trailer_boosh"),
-        new Fx("Blood", "scr_solomon3", "scr_trev4_747_blood_impact"),
         new Fx("Sparks", "core", "ent_sht_electrical_box"),
+        new Fx("Steam Puff", "core", "ent_sht_steam"),
         new Fx("Firework Burst", "scr_indep_fireworks", "scr_indep_firework_shotburst"),
         new Fx("Firework Star", "scr_indep_fireworks", "scr_indep_firework_starburst"),
-        new Fx("Smoke Puff", "core", "exp_grd_bzgas_smoke"),
+        new Fx("Blood (visual)", "scr_solomon3", "scr_trev4_747_blood_impact"),
         new Fx("Clown Puff", "scr_rcbarry2", "scr_clown_appears"),
     };
 
-    static readonly float[] Scales = { 0.5f, 1f, 1.5f, 2f, 3f };
+    static readonly float[] Scales = { 0.1f, 0.2f, 0.3f, 0.5f, 0.75f, 1f, 1.5f };
 
     readonly string[] rows = { "Weapon Effect", "Weapon Scale", "Hit Effect", "Hit Scale", "All Off", "Close" };
 
@@ -54,7 +49,8 @@ public class WeaponFX : Script
     bool menuOpen;
     int sel;
 
-    int weaponIdx, weaponScaleIdx = 1, hitIdx, hitScaleIdx = 1;
+    // ขนาดเริ่มต้น x0.3 (ดัชนี 2)
+    int weaponIdx, weaponScaleIdx = 2, hitIdx, hitScaleIdx = 2;
 
     // เอฟเฟกต์บนอาวุธที่กำลังเล่น
     int fxHandle, fxEntity, fxIdxApplied = -1, fxScaleApplied = -1;
@@ -151,9 +147,10 @@ public class WeaponFX : Script
         }
         fxEntity = 0;
         fxIdxApplied = -1;
+        fxScaleApplied = -1;
     }
 
-    // ---------- เอฟเฟกต์บนอาวุธ ----------
+    // ---------- เอฟเฟกต์บนอาวุธ (ติดที่ตัวอาวุธเท่านั้น) ----------
     void UpdateWeaponFx(Ped p)
     {
         if (weaponIdx == 0 || p.IsInVehicle() || p.IsDead)
@@ -162,8 +159,16 @@ public class WeaponFX : Script
             return;
         }
 
+        // ตัวอาวุธในมือ ถ้าไม่มี (เช่น มือเปล่า) = ไม่แสดงเอฟเฟกต์
         int ent = Function.Call<int>(Hash.GET_CURRENT_PED_WEAPON_ENTITY_INDEX, p, 0);
         if (ent == 0 || !Function.Call<bool>(Hash.DOES_ENTITY_EXIST, ent))
+        {
+            StopWeaponFx();
+            return;
+        }
+
+        // ถ้าได้ตัวคนมาแทนตัวอาวุธ ห้ามติดเด็ดขาด
+        if (ent == p.Handle)
         {
             StopWeaponFx();
             return;
@@ -197,7 +202,7 @@ public class WeaponFX : Script
         fxScaleApplied = weaponScaleIdx;
     }
 
-    // ---------- เอฟเฟกต์ตอนโจมตีโดน ----------
+    // ---------- เอฟเฟกต์ตอนโจมตีโดน (ภาพล้วนๆ) ----------
     void SpawnHit(Vector3 pos)
     {
         if (hitIdx == 0) return;
@@ -276,9 +281,9 @@ public class WeaponFX : Script
         switch (i)
         {
             case 0: return "Weapon Effect:  < " + WeaponList[weaponIdx].Label + " >";
-            case 1: return "Weapon Scale:  < x" + Scales[weaponScaleIdx].ToString("0.0") + " >";
+            case 1: return "Weapon Scale:  < x" + Scales[weaponScaleIdx].ToString("0.00") + " >";
             case 2: return "Hit Effect:  < " + HitList[hitIdx].Label + " >";
-            case 3: return "Hit Scale:  < x" + Scales[hitScaleIdx].ToString("0.0") + " >";
+            case 3: return "Hit Scale:  < x" + Scales[hitScaleIdx].ToString("0.00") + " >";
             default: return rows[i];
         }
     }
