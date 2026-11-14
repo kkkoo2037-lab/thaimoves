@@ -13,17 +13,17 @@ public class ThaiMoves : Script
     // จอย: L3 = พันแผล, RB = เกราะ (กด A ค้าง + RB = สไลด์)
     int PadHeal = 36, PadCover = 44, PadSprint = 21;
 
-    // ================= สไลด์ =================
+    // ================= สไลด์ (ท่าที่ 2) =================
     float SlideSpeed = 12f;
     int SlideTime = 900;
     float SideDrift = 0.3f;   // + = เบี่ยงขวา, - = เบี่ยงซ้าย, 0 = ตรง
-    string[] Dicts = { "anim@arena@celeb@flat@solo@no_props@", "missheistfbi3b_ig6_v2" };
-    string[] Clips = { "slide_a_player_a", "rubble_slide_franklin" };
+    string SlideDict = "missheistfbi3b_ig6_v2";
+    string SlideClip = "rubble_slide_franklin";   // ลองเปลี่ยนเป็น "rubble_slide_michael" ได้
 
     // ================= พันแผล =================
-    const int BANDAGE_TOTAL = 60;      // เลือดที่ได้รวม
-    const int BANDAGE_STEP = 10;       // เพิ่มทีละเท่าไหร่
-    const int BANDAGE_TICK_MS = 500;   // เพิ่มทุกกี่ ms
+    const int BANDAGE_TOTAL = 60;
+    const int BANDAGE_STEP = 10;
+    const int BANDAGE_TICK_MS = 500;
     const string BANDAGE_DICT = "amb@medic@standing@kneel@idle_a";
     const string BANDAGE_ANIM = "idle_a";
     const int BANDAGE_FLAG = 1;
@@ -99,8 +99,7 @@ public class ThaiMoves : Script
     {
         if (Game.GameTime < nextRequest) return;
         nextRequest = Game.GameTime + 1000;
-        for (int i = 0; i < Dicts.Length; i++)
-            Function.Call(Hash.REQUEST_ANIM_DICT, Dicts[i]);
+        Function.Call(Hash.REQUEST_ANIM_DICT, SlideDict);
     }
 
     // ---------- ลูปหลัก ----------
@@ -242,14 +241,8 @@ public class ThaiMoves : Script
         v.Z = p.Velocity.Z;
         p.Velocity = v;
 
-        for (int i = 0; i < Dicts.Length; i++)
-        {
-            if (Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, Dicts[i]))
-            {
-                Function.Call(Hash.TASK_PLAY_ANIM, p, Dicts[i], Clips[i],
-                    50f, -8f, SlideTime, 0, 0f, false, false, false);
-                break;
-            }
-        }
+        if (Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, SlideDict))
+            Function.Call(Hash.TASK_PLAY_ANIM, p, SlideDict, SlideClip,
+                50f, -8f, SlideTime, 0, 0f, false, false, false);
     }
 }
