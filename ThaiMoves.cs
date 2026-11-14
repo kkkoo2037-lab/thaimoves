@@ -8,16 +8,16 @@ using GTA.Native;
 public class ThaiMoves : Script
 {
     // ===== ปรับค่าตรงนี้ได้ =====
-    // คีย์บอร์ด: H=0x48 (เลือด), B=0x42 (เกราะ), X=0x58 (สไลด์ตรงๆ)
+    // คีย์บอร์ด: H=0x48 (เลือด), B=0x42 (เกราะ), X=0x58 (สไลด์)
     int HealKey = 0x48, ArmorKey = 0x42, SlideKey = 0x58;
 
     // จอย
     int PadHeal = 36;      // L3
-    int PadCover = 44;     // RB = เกราะ / สไลด์ถ้ากำลังวิ่ง
+    int PadCover = 44;     // RB = เกราะ / สไลด์ถ้ากด A ค้าง
     int PadSprint = 21;    // A (วิ่ง)
     bool BlockDefault = true;
 
-    bool Debug = true;     // แสดงข้อความบนจอ ใช้ได้แล้วเปลี่ยนเป็น false
+    bool Debug = false;    // true = แสดงข้อความ SLIDE/ARMOR บนจอ
 
     int HealAmount = 100;
     int ArmorAdd = 50;
@@ -27,9 +27,8 @@ public class ThaiMoves : Script
     int SlideTime = 900;
     float SideDrift = 0.3f;   // + = เบี่ยงขวา, - = เบี่ยงซ้าย, 0 = ตรง
 
-    // ท่าที่ 2 (ลองตามลำดับ)
-    string SlideDict = "missheistfbi3b_ig6_v2";
-    string[] SlideClips = { "rubble_slide_franklin", "rubble_slide_michael" };
+    string[] Dicts = { "anim@arena@celeb@flat@solo@no_props@", "missheistfbi3b_ig6_v2" };
+    string[] Clips = { "slide_a_player_a", "rubble_slide_franklin" };
     // ============================
 
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
@@ -51,18 +50,15 @@ public class ThaiMoves : Script
         Function.Call(Hash.END_TEXT_COMMAND_PRINT, 1500, true);
     }
 
-    static bool LoadDict(string dict)
+    static bool Anim(Ped p, string dict, string clip, int ms, int flags)
     {
         Function.Call(Hash.REQUEST_ANIM_DICT, dict);
         int t = Game.GameTime + 1500;
         while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict) && Game.GameTime < t)
             Script.Yield();
-        return Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict);
-    }
-
-    static void Play(Ped p, string dict, string clip, int ms, int flags)
-    {
+        if (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict)) return false;
         Function.Call(Hash.TASK_PLAY_ANIM, p, dict, clip, 8f, -8f, ms, flags, 0f, false, false, false);
+        return true;
     }
 
     static bool PadHeld(int c) { return Function.Call<bool>(Hash.IS_CONTROL_PRESSED, 0, c); }
@@ -83,16 +79,14 @@ public class ThaiMoves : Script
 
     void DoHeal(Ped p)
     {
-        if (LoadDict("mp_player_intdrink"))
-            Play(p, "mp_player_intdrink", "loop_bottle", 1500, 49);
+        Anim(p, "mp_player_intdrink", "loop_bottle", 1500, 49);
         healLeft = HealAmount;
         nextHeal = Game.GameTime;
     }
 
     void DoArmor(Ped p)
     {
-        if (LoadDict("clothingtie"))
-            Play(p, "clothingtie", "try_tie_neutral_a", 1200, 49);
+        Anim(p, "clothingtie", "try_tie_neutral_a", 1200, 49);
         p.Armor = Math.Min(100, p.Armor + ArmorAdd);
         bounceUntil = Game.GameTime + 600;
     }
@@ -109,20 +103,11 @@ public class ThaiMoves : Script
         slideEnd = Game.GameTime + SlideTime;
 
         p.Task.ClearAllImmediately();
-        bool ok = LoadDict(SlideDict);
-        if (ok)
-        {
-            for (int i = 0; i < SlideClips.Length; i++)
-            {
-                if (Function.Call<bool>(Hash.DOES_ANIM_EXIST_IN_DICT, SlideDict, SlideClips[i]) ||
-                    i == SlideClips.Length - 1)
-                {
-                    Play(p, SlideDict, SlideClips[i], SlideTime, 0);
-                    break;
-                }
-            }
-        }
-        else if (Debug) Msg("SLIDE: anim dict not found, push only");
+        bool ok = false;
+        for (int i = 0; i < Dicts.Length && !ok; i++)
+            ok = Anim(p, Dicts[i], Clips[i], SlideTime, 0);
+
+        if (Debug && !ok) Msg("SLIDE: no anim found, push only");
     }
 
     bool Ok(Ped p)
@@ -135,9 +120,8 @@ public class ThaiMoves : Script
         Ped p = Game.Player.Character;
         if (p == null || !p.Exists()) return;
 
-        // กำลังวิ่งอยู่ไหม (กด A ค้าง หรือตัวละครกำลัง sprint)
-        bool sprinting = PadHeld(PadSprint) || PadHeldDis(PadSprint)
-                         || Function.Call<bool>(Hash.IS_PED_SPRINTING, p);
+        // กด A (วิ่ง) ค้างอยู่ไหม
+        bool aHeld = PadHeld(PadSprint) || PadHeldDis(PadSprint);
 
         // คีย์บอร์ด
         bool h = KeyDownNow(HealKey), b = KeyDownNow(ArmorKey), x = KeyDownNow(SlideKey);
@@ -149,7 +133,7 @@ public class ThaiMoves : Script
         }
         hPrev = h; bPrev = b; xPrev = x;
 
-        // จอย: L3 = เลือด, RB = เกราะ (วิ่งค้าง + RB = สไลด์)
+        // จอย: L3 = เลือด, RB = เกราะ (กด A ค้าง + RB = สไลด์)
         if (Ok(p))
         {
             bool heal, cover;
@@ -170,8 +154,8 @@ public class ThaiMoves : Script
 
             if (cover)
             {
-                if (Debug) Msg("RB" + (sprinting ? " -> SLIDE" : " -> ARMOR"));
-                if (sprinting) DoSlide(p);
+                if (Debug) Msg(aHeld ? "RB -> SLIDE" : "RB -> ARMOR");
+                if (aHeld) DoSlide(p);
                 else DoArmor(p);
             }
         }
