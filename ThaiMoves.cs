@@ -8,33 +8,32 @@ using GTA.Native;
 public class ThaiMoves : Script
 {
     // ===== ปรับค่าตรงนี้ได้ =====
-    // คีย์บอร์ด: H=0x48, X=0x58, B=0x42
-    int HealKey = 0x48, SlideKey = 0x58, ArmorKey = 0x42;
+    // คีย์บอร์ด: H=0x48 (เลือด), B=0x42 (เกราะ), V=0x56 (สไลด์ ต้องวิ่งค้าง), X=0x58 (สไลด์ตรงๆ)
+    int HealKey = 0x48, ArmorKey = 0x42, SlideKey = 0x56, SlideDirectKey = 0x58;
 
     // จอย
-    int PadHeal = 36;     // L3
-    int PadCover = 44;    // RB (เกราะ / สไลด์ถ้ากดวิ่งค้าง)
-    int PadSprint = 21;   // A (วิ่ง)
-    bool BlockDefault = true;  // กันเกมทำงานปกติของ L3 (stealth) และ RB (cover) ตอนกด
+    int PadHeal = 36;      // L3
+    int PadCover = 44;     // RB = เกราะ
+    int PadSprint = 21;    // A (วิ่ง) ต้องค้างไว้ก่อนกด V
+    bool BlockDefault = true;
 
     int HealAmount = 100;
     int ArmorAdd = 50;
 
-    // พุ่ง/สไลด์
+    // สไลด์
     float SlideSpeed = 12f;
     int SlideTime = 900;
     float SideDrift = 0.3f;   // + = เบี่ยงขวา, - = เบี่ยงซ้าย, 0 = ตรง
-    float LeanDeg = 0f;
 
-    // ท่าอื่น (ว่าง = ใช้ท่าย่อของเกม)
-    string PoseDict = "";
-    string PoseClip = "";
+    // ท่าสไลด์จากมอด (ท่าที่ 2: "missheistfbi3b_ig6_v2" / "rubble_slide_franklin")
+    string PoseDict = "anim@arena@celeb@flat@solo@no_props@";
+    string PoseClip = "slide_a_player_a";
     // ============================
 
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
-    bool hPrev, xPrev, bPrev;
+    bool hPrev, bPrev, vPrev, xPrev;
     int healLeft, nextHeal, bounceUntil, slideEnd;
     Vector3 slideDir;
 
@@ -53,7 +52,6 @@ public class ThaiMoves : Script
     }
 
     static bool PadHeld(int c) { return Function.Call<bool>(Hash.IS_CONTROL_PRESSED, 0, c); }
-    static bool PadHeldDis(int c) { return Function.Call<bool>(Hash.IS_DISABLED_CONTROL_PRESSED, 0, c); }
     static bool PadJustDis(int c) { return Function.Call<bool>(Hash.IS_DISABLED_CONTROL_JUST_PRESSED, 0, c); }
     static bool PadJust(int c) { return Function.Call<bool>(Hash.IS_CONTROL_JUST_PRESSED, 0, c); }
 
@@ -93,8 +91,8 @@ public class ThaiMoves : Script
 
         slideEnd = Game.GameTime + SlideTime;
 
-        if (PoseDict != "" && PoseClip != "")
-            Anim(p, PoseDict, PoseClip, SlideTime, 1);
+        // flag 8 = ห้ามถูกตัดท่ากลางทาง
+        Anim(p, PoseDict, PoseClip, SlideTime, 8);
     }
 
     bool Ok(Ped p)
@@ -107,17 +105,25 @@ public class ThaiMoves : Script
         Ped p = Game.Player.Character;
         if (p == null || !p.Exists()) return;
 
+        bool sprinting = PadHeld(PadSprint);
+
+        // กันปุ่ม V เปลี่ยนมุมกล้องตอนวิ่งค้าง
+        if (sprinting)
+            Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 0, true);
+
         // คีย์บอร์ด
-        bool h = KeyDownNow(HealKey), x = KeyDownNow(SlideKey), b = KeyDownNow(ArmorKey);
+        bool h = KeyDownNow(HealKey), b = KeyDownNow(ArmorKey);
+        bool v = KeyDownNow(SlideKey), x = KeyDownNow(SlideDirectKey);
         if (Ok(p))
         {
             if (h && !hPrev) DoHeal(p);
-            if (x && !xPrev) DoSlide(p);
             if (b && !bPrev) DoArmor(p);
+            if (v && !vPrev && sprinting) DoSlide(p);   // วิ่งค้าง + V
+            if (x && !xPrev) DoSlide(p);                // X สไลด์ตรงๆ
         }
-        hPrev = h; xPrev = x; bPrev = b;
+        hPrev = h; bPrev = b; vPrev = v; xPrev = x;
 
-        // จอย
+        // จอย: L3 = เลือด, RB = เกราะ
         if (Ok(p))
         {
             bool heal, cover;
@@ -133,14 +139,8 @@ public class ThaiMoves : Script
                 heal = PadJust(PadHeal);
                 cover = PadJust(PadCover);
             }
-
             if (heal) DoHeal(p);
-
-            if (cover)
-            {
-                if (PadHeld(PadSprint)) DoSlide(p);   // วิ่งค้าง + RB = สไลด์
-                else DoArmor(p);                      // RB เฉยๆ = ใส่เกราะ
-            }
+            if (cover) DoArmor(p);
         }
 
         // เลือดเด้ง
@@ -166,26 +166,24 @@ public class ThaiMoves : Script
             Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, 0.45f, 0.80f - 0.03f * k);
         }
 
-        // พุ่ง/สไลด์
+        // สไลด์
         if (slideEnd > Game.GameTime)
         {
+            // ปิดปุ่มเดิน/วิ่งชั่วคราว กันท่าถูกตัด
+            Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 21, true);  // วิ่ง
+            Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 30, true);  // เดินซ้าย-ขวา
+            Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 31, true);  // เดินหน้า-หลัง
+
             float frac = (slideEnd - Game.GameTime) / (float)SlideTime;
             float power = frac * frac;
-            Vector3 v = slideDir * (SlideSpeed * power);
-            v.Z = p.Velocity.Z;
-            p.Velocity = v;
-
-            if (PoseDict == "")
-                Function.Call(Hash.SET_PED_STEALTH_MOVEMENT, p, true, "DEFAULT_ACTION");
-
-            if (LeanDeg != 0f)
-                p.Rotation = new Vector3(LeanDeg, 0f, p.Rotation.Z);
+            Vector3 vel = slideDir * (SlideSpeed * power);
+            vel.Z = p.Velocity.Z;
+            p.Velocity = vel;
         }
         else if (slideEnd != 0)
         {
             slideEnd = 0;
-            Function.Call(Hash.SET_PED_STEALTH_MOVEMENT, p, false, "DEFAULT_ACTION");
-            if (PoseDict != "") p.Task.ClearAll();
+            p.Task.ClearAll();
         }
     }
 }
