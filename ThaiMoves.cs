@@ -1,12 +1,14 @@
 using System;
-using System.Windows.Forms;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using GTA;
 using GTA.Math;
 using GTA.Native;
 
 public class ThaiMoves : Script
 {
-    Keys HealKey = Keys.H, SlideKey = Keys.X, ArmorKey = Keys.B;
+    // ปุ่มคีย์บอร์ด (รหัส Windows): H=0x48, X=0x58, B=0x42
+    int HealKey = 0x48, SlideKey = 0x58, ArmorKey = 0x42;
     int PadHold = 44;     // RB
     int PadHeal = 174;    // DPad Left
     int PadSlide = 175;   // DPad Right
@@ -21,13 +23,16 @@ public class ThaiMoves : Script
     string SlideDict = "anim@arena@celeb@flat@solo@no_props@";
     string SlideClip = "slide_a_player_a";
 
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+
+    bool hPrev, xPrev, bPrev;
     int healLeft, nextHeal, bounceUntil, slideEnd;
     Vector3 slideDir;
 
     public ThaiMoves()
     {
         Tick += OnTick;
-        KeyDown += OnKeyDown;
     }
 
     static void Anim(Ped p, string dict, string clip, int ms, int flags)
@@ -41,6 +46,20 @@ public class ThaiMoves : Script
 
     static bool Pad(int c) { return Function.Call<bool>(Hash.IS_CONTROL_JUST_PRESSED, 0, c); }
     static bool PadHeld(int c) { return Function.Call<bool>(Hash.IS_CONTROL_PRESSED, 0, c); }
+
+    static bool GameFocused()
+    {
+        try
+        {
+            return GetForegroundWindow() == Process.GetCurrentProcess().MainWindowHandle;
+        }
+        catch { return true; }
+    }
+
+    bool KeyDownNow(int vk)
+    {
+        return GameFocused() && (GetAsyncKeyState(vk) & 0x8000) != 0;
+    }
 
     void DoHeal(Ped p)
     {
@@ -69,20 +88,22 @@ public class ThaiMoves : Script
         return p != null && p.Exists() && !p.IsDead && !p.IsInVehicle();
     }
 
-    void OnKeyDown(object s, KeyEventArgs e)
-    {
-        Ped p = Game.Player.Character;
-        if (!Ok(p)) return;
-        if (e.KeyCode == HealKey) DoHeal(p);
-        else if (e.KeyCode == ArmorKey) DoArmor(p);
-        else if (e.KeyCode == SlideKey) DoSlide(p);
-    }
-
     void OnTick(object s, EventArgs e)
     {
         Ped p = Game.Player.Character;
         if (p == null || !p.Exists()) return;
 
+        // คีย์บอร์ด (ตรวจตอนกดลง)
+        bool h = KeyDownNow(HealKey), x = KeyDownNow(SlideKey), b = KeyDownNow(ArmorKey);
+        if (Ok(p))
+        {
+            if (h && !hPrev) DoHeal(p);
+            if (x && !xPrev) DoSlide(p);
+            if (b && !bPrev) DoArmor(p);
+        }
+        hPrev = h; xPrev = x; bPrev = b;
+
+        // จอย: กด RB ค้าง + ลูกศร
         if (Ok(p) && PadHeld(PadHold))
         {
             if (Pad(PadHeal)) DoHeal(p);
@@ -90,6 +111,7 @@ public class ThaiMoves : Script
             else if (Pad(PadArmor)) DoArmor(p);
         }
 
+        // เลือดเด้ง
         if (healLeft > 0 && Game.GameTime >= nextHeal)
         {
             int step = Math.Min(10, healLeft);
@@ -112,6 +134,7 @@ public class ThaiMoves : Script
             Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, 0.45f, 0.80f - 0.03f * k);
         }
 
+        // สไลด์
         if (slideEnd > Game.GameTime)
         {
             float frac = (slideEnd - Game.GameTime) / (float)SlideTime;
