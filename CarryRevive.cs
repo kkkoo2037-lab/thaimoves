@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using GTA;
 using GTA.Math;
@@ -7,22 +8,44 @@ using GTA.Native;
 public class CarryRevive : Script
 {
     // ===== Keys =====
-    int CarryKey = 0x47;     // G  pick up / put down
+    int CarryKey = 0x47;     // G  carry / put down a dead body
     int ReviveKey = 0x4A;    // J  revive (needs a Revive Kit)
-    int CancelKey = 0x08;    // Backspace (cancel revive)
+    int MenuKey = 0x70;      // F1 carry menu (living people)
+    int CancelKey = 0x08;    // Backspace
+    int KUp = 0x26, KDown = 0x28, KEnter = 0x0D;
 
     const int REVIVE_MS = 10000;     // 10 seconds
     const float PICKUP_RANGE = 2.5f;
 
-    // alive person: piggyback
-    const string PIG_DICT = "anim@arena@celeb@flat@paired@no_props@";
-    const string PIG_A = "piggyback_c_player_a";
-    const string PIG_B = "piggyback_c_player_b";
-    // dead person (and fallback): fireman carry
-    const string FIRE_DICT = "missfinale_c2mcs_1";
-    const string FIRE_A = "fin_c2_mcs_1_camman";
-    const string FIRE_B_DICT = "nm";
-    const string FIRE_B = "firemans_carry";
+    // ----- carry styles (living people) -----
+    // 0 = piggyback, 1 = over the shoulder (also used for bodies)
+    static readonly string[] StyleNames = {
+        "Piggyback (on back)",
+        "Shoulder carry"
+    };
+    static readonly string[] CDict = {
+        "anim@arena@celeb@flat@paired@no_props@",
+        "missfinale_c2mcs_1"
+    };
+    static readonly string[] CClip = {
+        "piggyback_c_player_a",
+        "fin_c2_mcs_1_camman"
+    };
+    static readonly string[] VDict = {
+        "anim@arena@celeb@flat@paired@no_props@",
+        "nm"
+    };
+    static readonly string[] VClip = {
+        "piggyback_c_player_b",
+        "firemans_carry"
+    };
+    static readonly float[] OffX = { 0f, 0.27f };
+    static readonly float[] OffY = { -0.07f, 0.15f };
+    static readonly float[] OffZ = { 0.45f, 0.63f };
+    static readonly float[] RotX = { 0f, 0.5f };
+    static readonly float[] RotY = { 0f, 0.5f };
+    static readonly float[] RotZ = { 0f, 180f };
+
     // CPR
     const string CPR_DICT = "mini@cpr@char_a@cpr_str";
     const string CPR_A = "cpr_pumpchest";
@@ -43,6 +66,9 @@ public class CarryRevive : Script
     Ped target;
     int reviveStart;
 
+    bool menuOpen;
+    int sel;
+
     public CarryRevive()
     {
         Tick += OnTick;
@@ -55,6 +81,12 @@ public class CarryRevive : Script
         bool r = d && !prev[vk];
         prev[vk] = d;
         return r;
+    }
+
+    static bool PadJustDis(int c)
+    {
+        return Function.Call<bool>(
+            Hash.IS_DISABLED_CONTROL_JUST_PRESSED, 0, c);
     }
 
     static void Msg(string t)
@@ -105,7 +137,8 @@ public class CarryRevive : Script
             Hash.IS_ENTITY_PLAYING_ANIM, ped, dict, clip, 3);
     }
 
-    static Ped FindNearest(Ped p, float range, bool deadOnly)
+    // who: 0 = anyone, 1 = dead only, 2 = alive only
+    static Ped FindNearest(Ped p, float range, int who)
     {
         Ped best = null;
         float bd = range;
@@ -114,7 +147,8 @@ public class CarryRevive : Script
         {
             Ped t = peds[i];
             if (t == null || !t.Exists() || t == p) continue;
-            if (deadOnly && !t.IsDead) continue;
+            if (who == 1 && !t.IsDead) continue;
+            if (who == 2 && t.IsDead) continue;
             if (t.IsInVehicle()) continue;
             if (Function.Call<bool>(Hash.IS_ENTITY_ATTACHED, t))
                 continue;
@@ -129,15 +163,8 @@ public class CarryRevive : Script
     }
 
     // ---------- Carry ----------
-    void StartCarry(Ped p)
+    void StartCarry(Ped p, Ped t, int style)
     {
-        Ped t = FindNearest(p, PICKUP_RANGE, false);
-        if (t == null)
-        {
-            Msg("No one nearby");
-            return;
-        }
-
         carriedDead = t.IsDead;
         Function.Call(Hash.SET_ENTITY_AS_MISSION_ENTITY, t, true, true);
 
@@ -148,34 +175,28 @@ public class CarryRevive : Script
                 Hash.SET_BLOCKING_OF_NON_TEMPORARY_EVENTS, t, true);
         }
 
-        if (!carriedDead && LoadDict(PIG_DICT))
+        int st = style;
+        if (!LoadDict(CDict[st]))
         {
-            // alive: piggyback ride
-            curDict = PIG_DICT;
-            curClip = PIG_A;
-            Play(p, curDict, curClip, 49);
-            Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, t, p, 0,
-                0f, -0.07f, 0.45f, 0f, 0f, 0f,
-                false, false, false, false, 2, false);
-            Play(t, PIG_DICT, PIG_B, 33);
-        }
-        else
-        {
-            // dead (or fallback): over the shoulder
-            LoadDict(FIRE_DICT);
-            curDict = FIRE_DICT;
-            curClip = FIRE_A;
-            Play(p, curDict, curClip, 49);
-            Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, t, p, 0,
-                0.27f, 0.15f, 0.63f, 0.5f, 0.5f, 180f,
-                false, false, false, false, 2, false);
-            if (!carriedDead && LoadDict(FIRE_B_DICT))
-                Play(t, FIRE_B_DICT, FIRE_B, 33);
+            st = 1;
+            LoadDict(CDict[st]);
         }
 
+        curDict = CDict[st];
+        curClip = CClip[st];
+        Play(p, curDict, curClip, 49);
+
+        Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, t, p, 0,
+            OffX[st], OffY[st], OffZ[st],
+            RotX[st], RotY[st], RotZ[st],
+            false, false, false, false, 2, false);
+
+        if (!carriedDead && LoadDict(VDict[st]))
+            Play(t, VDict[st], VClip[st], 33);
+
         carried = t;
-        Msg(carriedDead ? "Carrying body (G = put down)"
-            : "Carrying (G = put down)");
+        if (carriedDead) Msg("Carrying body (G = put down)");
+        else Msg("Carrying (F1 menu = put down)");
     }
 
     void Drop(Ped p)
@@ -224,7 +245,6 @@ public class CarryRevive : Script
 
         Function.Call(Hash.SET_ENTITY_AS_MISSION_ENTITY, t, true, true);
 
-        // stand next to the body, facing it
         Vector3 d = p.Position - t.Position;
         d.Z = 0f;
         if (d.Length() < 0.1f) d = new Vector3(0.6f, 0f, 0f);
@@ -282,6 +302,46 @@ public class CarryRevive : Script
             200, 200, 205, 255, true);
     }
 
+    // ---------- Carry menu (F1) ----------
+    List<string> MenuRows()
+    {
+        List<string> rows = new List<string>();
+        if (carried != null)
+        {
+            rows.Add("Put down");
+        }
+        else
+        {
+            for (int i = 0; i < StyleNames.Length; i++)
+                rows.Add(StyleNames[i]);
+        }
+        rows.Add("Close");
+        return rows;
+    }
+
+    void DrawMenu(List<string> rows)
+    {
+        int n = rows.Count;
+        float top = 0.30f;
+        float h = 0.12f + n * 0.045f;
+        Rect(0.5f, top + h / 2f - 0.02f, 0.30f, h, 18, 18, 22, 235);
+        DrawText("CARRY", 0.5f, top, 0.5f, 255, 255, 255, 255, true);
+
+        for (int i = 0; i < n; i++)
+        {
+            float y = top + 0.06f + i * 0.045f;
+            bool on = (i == sel);
+            if (on)
+                Rect(0.5f, y + 0.014f, 0.28f, 0.038f,
+                    225, 100, 130, 255);
+            DrawText(rows[i], 0.5f, y, 0.38f,
+                255, 255, 255, 255, true);
+        }
+        DrawText("Up/Down = move   Enter = select   Back = close",
+            0.5f, top + 0.075f + n * 0.045f, 0.26f,
+            200, 200, 205, 255, true);
+    }
+
     // ---------- Main loop ----------
     void OnTick(object sender, EventArgs e)
     {
@@ -295,7 +355,11 @@ public class CarryRevive : Script
 
         bool kCarry = Pressed(CarryKey);
         bool kRevive = Pressed(ReviveKey);
+        bool kMenu = Pressed(MenuKey);
         bool kCancel = Pressed(CancelKey);
+        bool kUp = Pressed(KUp);
+        bool kDown = Pressed(KDown);
+        bool kEnter = Pressed(KEnter);
 
         if (p == null || !p.Exists())
         {
@@ -310,6 +374,7 @@ public class CarryRevive : Script
         {
             if (carried != null) Drop(p);
             if (reviving) { reviving = false; target = null; }
+            menuOpen = false;
             Inv.Busy = false;
             Inv.WantRevive = false;
             return;
@@ -321,11 +386,10 @@ public class CarryRevive : Script
         // ---------- reviving (CPR) ----------
         if (reviving)
         {
+            menuOpen = false;
             Function.Call(Hash.DISABLE_ALL_CONTROL_ACTIONS, 0);
 
-            bool cancel = kCancel
-                || Function.Call<bool>(
-                    Hash.IS_DISABLED_CONTROL_JUST_PRESSED, 0, 202);
+            bool cancel = kCancel || PadJustDis(202);
 
             if (target == null || !target.Exists() || !target.IsDead)
             {
@@ -348,6 +412,49 @@ public class CarryRevive : Script
             }
 
             Inv.Busy = true;
+            return;
+        }
+
+        // ---------- F1 menu ----------
+        if (kMenu)
+        {
+            menuOpen = !menuOpen;
+            sel = 0;
+        }
+
+        if (menuOpen)
+        {
+            Function.Call(Hash.DISABLE_ALL_CONTROL_ACTIONS, 0);
+            Inv.Busy = true;
+
+            List<string> rows = MenuRows();
+            int n = rows.Count;
+            if (kUp || PadJustDis(172)) sel = (sel + n - 1) % n;
+            if (kDown || PadJustDis(173)) sel = (sel + 1) % n;
+            if (kCancel || PadJustDis(202)) menuOpen = false;
+
+            if (kEnter || PadJustDis(201))
+            {
+                if (carried != null)
+                {
+                    if (sel == 0) Drop(p);
+                    menuOpen = false;
+                }
+                else if (sel < StyleNames.Length)
+                {
+                    menuOpen = false;
+                    Ped t = FindNearest(p, PICKUP_RANGE, 2);
+                    if (t == null) Msg("No one nearby");
+                    else StartCarry(p, t, sel);
+                }
+                else
+                {
+                    menuOpen = false;
+                }
+            }
+
+            if (menuOpen) DrawMenu(rows);
+            Inv.Busy = menuOpen || carried != null;
             return;
         }
 
@@ -379,7 +486,6 @@ public class CarryRevive : Script
 
                 if (carriedDead && askRevive)
                 {
-                    // revive the body we are carrying
                     if (CanRevive())
                     {
                         Ped body = carried;
@@ -401,11 +507,17 @@ public class CarryRevive : Script
         // ---------- idle ----------
         Inv.Busy = false;
 
-        if (kCarry) StartCarry(p);
+        // G = bodies only
+        if (kCarry)
+        {
+            Ped body = FindNearest(p, PICKUP_RANGE, 1);
+            if (body == null) Msg("No body nearby");
+            else StartCarry(p, body, 1);
+        }
 
         if (askRevive)
         {
-            Ped t = FindNearest(p, PICKUP_RANGE, true);
+            Ped t = FindNearest(p, PICKUP_RANGE, 1);
             if (t == null) Msg("No dead body nearby");
             else if (CanRevive()) StartRevive(p, t);
         }

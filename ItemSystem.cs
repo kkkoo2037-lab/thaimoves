@@ -316,11 +316,7 @@ public class ItemSystem : Script
             Msg("You don't have this item");
             return;
         }
-        if (p.IsInVehicle())
-        {
-            Msg("Can't use in a vehicle");
-            return;
-        }
+        bool inVeh = p.IsInVehicle();
 
         if (id == Inv.Bandage)
         {
@@ -349,7 +345,8 @@ public class ItemSystem : Script
             Function.Call(Hash.RESTORE_PLAYER_STAMINA,
                 Game.Player.Handle, 1.0f);
             p.Health = Math.Min(p.MaxHealth, p.Health + 5);
-            PlayAnim(p, "mp_player_intdrink", "loop_bottle", 1800);
+            if (!inVeh)
+                PlayAnim(p, "mp_player_intdrink", "loop_bottle", 1800);
             Msg("Water: stamina restored");
         }
         else if (id == Inv.Burger)
@@ -361,12 +358,18 @@ public class ItemSystem : Script
             }
             Inv.Take(id);
             p.Health = Math.Min(p.MaxHealth, p.Health + 25);
-            PlayAnim(p, "mp_player_inteat@burger",
-                "mp_player_int_eat_burger", 2500);
+            if (!inVeh)
+                PlayAnim(p, "mp_player_inteat@burger",
+                    "mp_player_int_eat_burger", 2500);
             Msg("Burger: +25 health");
         }
         else if (id == Inv.Revive)
         {
+            if (inVeh)
+            {
+                Msg("Get out of the vehicle to revive");
+                return;
+            }
             Inv.WantRevive = true;
             mode = 0;
         }
@@ -376,7 +379,8 @@ public class ItemSystem : Script
             Function.Call(Hash.SET_RUN_SPRINT_MULTIPLIER_FOR_PLAYER,
                 Game.Player.Handle, 1.3f);
             boostEnd = Game.GameTime + 30000;
-            PlayAnim(p, "mp_player_intdrink", "loop_bottle", 1800);
+            if (!inVeh)
+                PlayAnim(p, "mp_player_intdrink", "loop_bottle", 1800);
             Msg("Energy Drink: speed boost 30s");
         }
     }
@@ -691,7 +695,7 @@ public class ItemSystem : Script
         if (kBag)
         {
             if (mode != 0) mode = 0;
-            else if (!p.IsInVehicle()) OpenMenu(1);
+            else OpenMenu(1);
         }
 
         // ---------- menu ----------

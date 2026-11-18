@@ -7,11 +7,21 @@ using GTA.Native;
 
 public class ThaiMoves : Script
 {
-    // ================= Keys =================
-    // Keyboard: H=0x48 (bandage), B=0x42 (armor), X=0x58 (slide)
+    // ================= Keyboard =================
+    // H = bandage, B = armor, X = slide
     int HealKey = 0x48, ArmorKey = 0x42, SlideKey = 0x58;
-    // Pad: L3 = bandage, RB = armor (hold A + RB = slide)
-    int PadHeal = 36, PadCover = 44, PadSprint = 21;
+
+    // ================= Pad (on foot) =================
+    // Aim (LT) + RB = bandage
+    // Aim (LT) + LB = armor
+    // Sprint (A) + L3 = slide
+    int PadAim = 25;       // LT
+    int PadRB = 44;        // RB
+    int PadLB = 37;        // LB
+    int PadL3 = 36;        // L3
+    int PadSprint = 21;    // A (sprint)
+
+    bool Debug = false;    // true = show a message when a move triggers
 
     // ================= Slide (anim 2) =================
     float SlideSpeed = 12f;
@@ -27,6 +37,8 @@ public class ThaiMoves : Script
     const string BANDAGE_DICT = "amb@medic@standing@kneel@idle_a";
     const string BANDAGE_ANIM = "idle_a";
     const int BANDAGE_FLAG = 1;
+    // bandage pose = the slide clip, frozen at this time (ms)
+    const int BANDAGE_POSE_MS = 900;
     const string BANDAGE_DICT2 = "amb@medic@standing@tendtodead@base";
     const string BANDAGE_ANIM2 = "base";
 
@@ -48,6 +60,8 @@ public class ThaiMoves : Script
     int armorEnd;
     int slideEnd, nextRequest;
     Vector3 slideDir;
+    bool poseFrozen;
+    int poseStart, nextPoseCheck;
 
     public ThaiMoves()
     {
@@ -70,6 +84,11 @@ public class ThaiMoves : Script
     {
         return Function.Call<bool>(
             Hash.IS_DISABLED_CONTROL_JUST_PRESSED, 0, c);
+    }
+
+    static void Msg(string t)
+    {
+        GTA.UI.Screen.ShowSubtitle(t, 1500);
     }
 
     static bool GameFocused()
@@ -138,7 +157,7 @@ public class ThaiMoves : Script
     void Tick2()
     {
         Ped p = Game.Player.Character;
-        if (p == null || !p.Exists() || p.IsDead || p.IsInVehicle())
+        if (p == null || !p.Exists() || p.IsDead)
         {
             slideEnd = 0;
             return;
@@ -149,38 +168,56 @@ public class ThaiMoves : Script
 
         KeepLoaded();
         int now = Game.GameTime;
+        bool inVeh = p.IsInVehicle();
+        if (inVeh) slideEnd = 0;
         bool sliding = slideEnd > now;
-
-        // block default L3 (stealth) and RB (cover)
-        Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, PadHeal, true);
-        Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, PadCover, true);
-
-        bool aHeld = PadHeld(PadSprint) || PadHeldDis(PadSprint);
 
         // keyboard
         bool h = KeyDownNow(HealKey);
         bool b = KeyDownNow(ArmorKey);
         bool x = KeyDownNow(SlideKey);
-        bool kbHeal = h && !hPrev;
-        bool kbArmor = b && !bPrev;
-        bool kbSlide = x && !xPrev;
+        bool bandagePressed = (h && !hPrev) || Inv.WantBandage;
+        bool armorPressed = (b && !bPrev) || Inv.WantArmor;
+        bool slidePressed = x && !xPrev && !inVeh;
         hPrev = h;
         bPrev = b;
         xPrev = x;
-
-        // pad + requests from the bag menu
-        bool coverPressed = PadJustDis(PadCover);
-        bool bandagePressed = PadJustDis(PadHeal) || kbHeal
-            || Inv.WantBandage;
-        bool armorPressed = (coverPressed && !aHeld) || kbArmor
-            || Inv.WantArmor;
-        bool slidePressed = (coverPressed && aHeld) || kbSlide;
         Inv.WantBandage = false;
         Inv.WantArmor = false;
 
-        // ---------- Slide ----------
-        if (slidePressed && !sliding)
+        // pad combos (on foot only)
+        if (!inVeh)
         {
+            bool aimHeld = PadHeld(PadAim);
+            bool sprintHeld = PadHeld(PadSprint)
+                || PadHeldDis(PadSprint) || p.IsSprinting;
+
+            // block the default action only while a combo is held
+            if (aimHeld)
+            {
+                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, PadRB, true);
+                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, PadLB, true);
+            }
+            if (sprintHeld)
+            {
+                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, PadL3, true);
+            }
+
+            if (aimHeld)
+            {
+                if (PadJustDis(PadRB)) bandagePressed = true;
+                if (PadJustDis(PadLB)) armorPressed = true;
+            }
+            else if (sprintHeld && PadJustDis(PadL3))
+            {
+                slidePressed = true;
+            }
+        }
+
+        // ---------- Slide ----------
+        if (slidePressed && !sliding && !inVeh)
+        {
+            if (Debug) Msg("SLIDE");
             StartSlide(p, now);
             sliding = true;
         }
@@ -189,10 +226,9 @@ public class ThaiMoves : Script
         if (bandagePressed && !bandaging && !sliding)
         {
             if (p.Health >= p.MaxHealth)
-                GTA.UI.Screen.ShowSubtitle("Health is full");
+                Msg("Health is full");
             else if (!Inv.Take(Inv.Bandage))
-                GTA.UI.Screen.ShowSubtitle(
-                    "No bandage - buy one at a shop");
+                Msg("No bandage - buy one at a shop");
             else
             {
                 bandaging = true;
@@ -200,13 +236,16 @@ public class ThaiMoves : Script
                 nextHeal = now + BANDAGE_TICK_MS;
                 int steps = BANDAGE_TOTAL / BANDAGE_STEP;
                 bandageEnd = now + steps * BANDAGE_TICK_MS;
-                PlayAnimFb(p, BANDAGE_DICT, BANDAGE_ANIM,
-                    BANDAGE_FLAG, BANDAGE_DICT2, BANDAGE_ANIM2,
-                    49, bandageEnd - now);
+                if (!inVeh) StartBandagePose(p, now);
             }
         }
         if (bandaging)
         {
+            if (!inVeh)
+            {
+                DisableMove();
+                KeepPose(p, now);
+            }
             if (now >= nextHeal && healLeft > 0)
             {
                 int hp = p.Health + BANDAGE_STEP;
@@ -218,8 +257,7 @@ public class ThaiMoves : Script
                 || p.Health >= p.MaxHealth)
             {
                 bandaging = false;
-                StopAnim(p, BANDAGE_DICT, BANDAGE_ANIM);
-                StopAnim(p, BANDAGE_DICT2, BANDAGE_ANIM2);
+                if (!inVeh) EndBandagePose(p);
             }
         }
 
@@ -227,24 +265,24 @@ public class ThaiMoves : Script
         if (armorPressed && !armoring && !sliding)
         {
             if (p.Armor >= 100)
-                GTA.UI.Screen.ShowSubtitle("Armor is full");
+                Msg("Armor is full");
             else if (!Inv.Take(Inv.Armor))
-                GTA.UI.Screen.ShowSubtitle(
-                    "No body armor - buy one at a shop");
+                Msg("No body armor - buy one at a shop");
             else
             {
                 armoring = true;
                 armorEnd = now + ARMOR_ANIM_MS;
-                PlayAnim(p, ARMOR_DICT, ARMOR_ANIM,
-                    ARMOR_ANIM_MS, 49);
+                if (!inVeh)
+                    PlayAnim(p, ARMOR_DICT, ARMOR_ANIM,
+                        ARMOR_ANIM_MS, 49);
             }
         }
         if (armoring && now >= armorEnd)
         {
             armoring = false;
             p.Armor = 100;
-            StopAnim(p, ARMOR_DICT, ARMOR_ANIM);
-            GTA.UI.Screen.ShowSubtitle("Armor equipped");
+            if (!inVeh) StopAnim(p, ARMOR_DICT, ARMOR_ANIM);
+            Msg("Armor equipped");
         }
 
         // tougher while armored
@@ -274,6 +312,80 @@ public class ThaiMoves : Script
         }
     }
 
+    // ---------- Bandage pose (slide clip, frozen) ----------
+    void PlaySlideClipLocked(Ped p)
+    {
+        Function.Call(Hash.TASK_PLAY_ANIM, p, SlideDict, SlideClip,
+            8f, -8f, -1, 8, 0f, true, true, true);
+    }
+
+    void StartBandagePose(Ped p, int now)
+    {
+        if (!LoadDict(SlideDict)) return;
+        PlaySlideClipLocked(p);
+        poseStart = now;
+        poseFrozen = false;
+        nextPoseCheck = now + 300;
+    }
+
+    void FreezeClip(Ped p)
+    {
+        Function.Call(Hash.SET_ENTITY_ANIM_SPEED, p,
+            SlideDict, SlideClip, 0f);
+    }
+
+    void KeepPose(Ped p, int now)
+    {
+        bool playing = Function.Call<bool>(
+            Hash.IS_ENTITY_PLAYING_ANIM, p, SlideDict, SlideClip, 3);
+
+        if (!poseFrozen)
+        {
+            if (now - poseStart < BANDAGE_POSE_MS) return;
+            if (!playing)
+            {
+                // clip already ended: replay it and jump to its end
+                PlaySlideClipLocked(p);
+                Script.Yield();
+                Function.Call(Hash.SET_ENTITY_ANIM_CURRENT_TIME, p,
+                    SlideDict, SlideClip, 0.95f);
+            }
+            FreezeClip(p);
+            poseFrozen = true;
+            return;
+        }
+
+        if (now < nextPoseCheck) return;
+        nextPoseCheck = now + 300;
+        if (!playing)
+        {
+            PlaySlideClipLocked(p);
+            Script.Yield();
+            Function.Call(Hash.SET_ENTITY_ANIM_CURRENT_TIME, p,
+                SlideDict, SlideClip, 0.95f);
+        }
+        FreezeClip(p);
+    }
+
+    void EndBandagePose(Ped p)
+    {
+        Function.Call(Hash.SET_ENTITY_ANIM_SPEED, p,
+            SlideDict, SlideClip, 1f);
+        Function.Call(Hash.STOP_ANIM_TASK, p,
+            SlideDict, SlideClip, 1f);
+        p.Task.ClearAll();
+        poseFrozen = false;
+    }
+
+    static void DisableMove()
+    {
+        Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 21, true);
+        Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 22, true);
+        Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 30, true);
+        Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 31, true);
+        Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 24, true);
+    }
+
     void StartSlide(Ped p, int now)
     {
         if (armoring)
@@ -284,8 +396,7 @@ public class ThaiMoves : Script
         if (bandaging)
         {
             bandaging = false;
-            StopAnim(p, BANDAGE_DICT, BANDAGE_ANIM);
-            StopAnim(p, BANDAGE_DICT2, BANDAGE_ANIM2);
+            EndBandagePose(p);
         }
 
         Vector3 f = p.ForwardVector;
