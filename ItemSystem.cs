@@ -15,11 +15,14 @@ public static class Inv
     public const int Water = 3;
     public const int Burger = 4;
     public const int Energy = 5;
+    public const int Revive = 6;
 
-    public static int[] Qty = new int[6];
+    public static int[] Qty = new int[7];
     public static bool Dirty;
     public static bool WantBandage;
     public static bool WantArmor;
+    public static bool WantRevive;
+    public static bool Busy;      // carrying / reviving someone
 
     public static bool Take(int id)
     {
@@ -49,7 +52,7 @@ public class ItemSystem : Script
 
     static readonly string[] Names = {
         "Bandage", "Body Armor", "Medkit",
-        "Water", "Burger", "Energy Drink"
+        "Water", "Burger", "Energy Drink", "Revive Kit"
     };
     static readonly string[] Desc = {
         "Heals 60 HP over time (L3 / H)",
@@ -57,14 +60,15 @@ public class ItemSystem : Script
         "Instantly restores full health",
         "Restores stamina, +5 HP",
         "Restores 25 HP",
-        "Speed boost for 30 seconds"
+        "Speed boost for 30 seconds",
+        "Revives a dead person (CPR 10s)"
     };
-    static readonly int[] Cat = { 1, 2, 1, 3, 3, 3 };
+    static readonly int[] Cat = { 1, 2, 1, 3, 3, 3, 1 };
     static readonly string[] CatNames = {
         "ALL", "MEDICAL", "ARMOR", "FOOD"
     };
-    static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60 };
-    static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20 };
+    static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60, 1000 };
+    static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20, 300 };
     static readonly int[] QtyOptions = { 1, 5, 10 };
 
     // Pixel icons 10x10 ('.' = empty)
@@ -140,6 +144,18 @@ public class ItemSystem : Script
             "..RRRRRR..",
             "..RRRRRR..",
             "...GGGG..."
+        },
+        new string[] {   // revive kit (heart)
+            "..RR..RR..",
+            ".RRRRRRRR.",
+            "RRRWRRRRRR",
+            "RRWRRRRRRR",
+            "RRRRRRRRRR",
+            ".RRRRRRRR.",
+            "..RRRRRR..",
+            "...RRRR...",
+            "....RR....",
+            ".........."
         },
     };
 
@@ -348,6 +364,11 @@ public class ItemSystem : Script
             PlayAnim(p, "mp_player_inteat@burger",
                 "mp_player_int_eat_burger", 2500);
             Msg("Burger: +25 health");
+        }
+        else if (id == Inv.Revive)
+        {
+            Inv.WantRevive = true;
+            mode = 0;
         }
         else if (id == Inv.Energy)
         {

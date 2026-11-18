@@ -144,6 +144,9 @@ public class ThaiMoves : Script
             return;
         }
 
+        // carrying / reviving someone: do nothing
+        if (Inv.Busy) return;
+
         KeepLoaded();
         int now = Game.GameTime;
         bool sliding = slideEnd > now;
