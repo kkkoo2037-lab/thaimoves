@@ -166,6 +166,7 @@ public class ItemSystem : Script
     int mode;          // 0 closed, 1 bag, 2 shop
     bool sellMode;
     int catSel;        // 0..3
+    int focus = 1;     // 0 = category list, 1 = item grid
     int sel;           // index in visible list
     int scrollRow;
     int qtyIdx;
@@ -469,7 +470,10 @@ public class ItemSystem : Script
         {
             float cy = 0.30f + i * 0.05f;
             bool on = (i == catSel);
-            if (on)
+            if (on && focus == 0)
+                Rect(0.245f, cy + 0.012f, 0.12f, 0.040f,
+                    225, 100, 130, 255);
+            else if (on)
                 Rect(0.245f, cy + 0.012f, 0.12f, 0.040f,
                     120, 50, 70, 200);
             DrawText(CatNames[i], 0.200f, cy, 0.36f,
@@ -513,7 +517,7 @@ public class ItemSystem : Script
             float tcx = tx + tw / 2f;
             float tcy = ty + th / 2f;
 
-            if (i == sel)
+            if (i == sel && focus == 1)
                 Rect(tcx, tcy, tw + 0.004f, th + 0.007f,
                     225, 100, 130, 255);
             Rect(tcx, tcy, tw, th, 36, 36, 42, 255);
@@ -563,9 +567,9 @@ public class ItemSystem : Script
 
         // hints
         string hint = mode == 1
-            ? "Arrows move   Tab category   Enter use   Back close"
-            : "Arrows move   Tab category   T buy/sell   "
-                + "Q qty   Enter confirm   Back close";
+            ? "Arrows move   Left = categories   Enter use"
+            : "Arrows move   Left = categories   T buy/sell   "
+                + "Q qty   Enter confirm";
         DrawText(hint, 0.5f, 0.833f, 0.30f,
             200, 200, 205, 255, true);
     }
@@ -583,6 +587,7 @@ public class ItemSystem : Script
         sel = 0;
         scrollRow = 0;
         catSel = 0;
+        focus = 1;
         sellMode = false;
         qtyIdx = 0;
     }
@@ -685,10 +690,41 @@ public class ItemSystem : Script
 
         BuildVisible();
         int cols = 6;
-        if (up && sel - cols >= 0) sel -= cols;
-        if (down && sel + cols < vis.Count) sel += cols;
-        if (left && sel > 0) sel--;
-        if (right && sel + 1 < vis.Count) sel++;
+        bool enterUse = enter;
+        if (focus == 0)
+        {
+            // category list: Up/Down changes category
+            int nc = CatNames.Length;
+            if (up)
+            {
+                catSel = (catSel + nc - 1) % nc;
+                sel = 0;
+                scrollRow = 0;
+            }
+            if (down)
+            {
+                catSel = (catSel + 1) % nc;
+                sel = 0;
+                scrollRow = 0;
+            }
+            if (right || enter)
+            {
+                focus = 1;
+                enterUse = false;
+            }
+        }
+        else
+        {
+            // item grid: Left on the first column goes to categories
+            if (up && sel - cols >= 0) sel -= cols;
+            if (down && sel + cols < vis.Count) sel += cols;
+            if (left)
+            {
+                if (sel % cols == 0) focus = 0;
+                else sel--;
+            }
+            if (right && sel + 1 < vis.Count) sel++;
+        }
 
         if (tab)
         {
@@ -707,7 +743,7 @@ public class ItemSystem : Script
 
         if (back) mode = 0;
 
-        if (enter && mode != 0)
+        if (enterUse && focus == 1 && mode != 0)
         {
             BuildVisible();
             if (vis.Count > 0)
