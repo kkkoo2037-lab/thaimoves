@@ -313,19 +313,31 @@ public class CarryRevive : Script
     void CompleteRevive(Ped p)
     {
         Ped t = target;
+
+        // reset the revive state FIRST so a failure below can never
+        // leave the script stuck in "reviving" (and eat extra kits)
+        StopRevive(p, "");
+        if (t == null || !t.Exists()) return;
+
         Inv.Take(Inv.Revive);
 
-        // keep the body where it lies: no snap to standing
-        // (ClearAllImmediately made the ped pop up), then let it
-        // get up on its own after the ragdoll ends
+        // remember where the body lies so it does not pop up
+        Vector3 pos = t.Position;
+
+        // RESURRECT_PED alone leaves the "dead" task running, so the
+        // ped stays lying there and never gets up. The tasks must be
+        // cleared immediately, then ragdoll in the SAME tick so the
+        // ped falls/stays down instead of snapping to standing.
         Function.Call(Hash.RESURRECT_PED, t);
+        Function.Call(Hash.CLEAR_PED_TASKS_IMMEDIATELY, t);
+        Function.Call(Hash.SET_ENTITY_COORDS_NO_OFFSET, t,
+            pos.X, pos.Y, pos.Z, false, false, false);
         t.Health = 150;
-        Function.Call(Hash.CLEAR_PED_TASKS, t);
+        Function.Call(Hash.SET_PED_CAN_RAGDOLL, t, true);
         Function.Call(Hash.SET_ENTITY_VELOCITY, t, 0f, 0f, 0f);
-        Function.Call(Hash.SET_PED_TO_RAGDOLL, t, 2500, 2500,
+        Function.Call(Hash.SET_PED_TO_RAGDOLL, t, 3000, 3000,
             0, false, false, false);
 
-        StopRevive(p, "");
         Msg("Revived!");
     }
 
@@ -393,7 +405,16 @@ public class CarryRevive : Script
     void OnTick(object sender, EventArgs e)
     {
         try { Tick2(); }
-        catch (Exception) { }
+        catch (Exception ex)
+        {
+            // do not swallow errors silently: write them to a log
+            try
+            {
+                System.IO.File.AppendAllText("CarryRevive.log",
+                    DateTime.Now + "  " + ex + "\r\n");
+            }
+            catch (Exception) { }
+        }
     }
 
     void Tick2()
