@@ -18,33 +18,47 @@ public class CarryRevive : Script
     const float PICKUP_RANGE = 2.5f;
 
     // ----- carry styles (living people) -----
-    // 0 = piggyback, 1 = over the shoulder (also used for bodies)
+    // 0 = piggyback, 1 = fireman's carry (also used for bodies),
+    // 2 = carry in arms (box carry poses)
     static readonly string[] StyleNames = {
         "Piggyback (on back)",
-        "Shoulder carry"
+        "Fireman's carry (shoulder)",
+        "Carry in arms (box pose)"
     };
-    static readonly string[] CDict = {
-        "anim@arena@celeb@flat@paired@no_props@",
-        "missfinale_c2mcs_1"
-    };
+
+    const string PIG_DICT = "anim@arena@celeb@flat@paired@no_props@";
+    const string BOX_DICT = "anim@heists@box_carry@";
+
+    static readonly string[] CDict = { PIG_DICT, "missfinale_c2mcs_1", BOX_DICT };
     static readonly string[] CClip = {
-        "piggyback_c_player_a",
-        "fin_c2_mcs_1_camman"
+        "piggyback_c_player_a", "fin_c2_mcs_1_camman", "box_carryidle"
     };
-    static readonly string[] VDict = {
-        "anim@arena@celeb@flat@paired@no_props@",
-        "nm"
-    };
+    static readonly string[] VDict = { PIG_DICT, "nm", "nm" };
     static readonly string[] VClip = {
-        "piggyback_c_player_b",
-        "firemans_carry"
+        "piggyback_c_player_b", "firemans_carry", "firemans_carry"
     };
-    static readonly float[] OffX = { 0f, 0.27f };
-    static readonly float[] OffY = { -0.07f, 0.15f };
-    static readonly float[] OffZ = { 0.45f, 0.63f };
-    static readonly float[] RotX = { 0f, 0.5f };
-    static readonly float[] RotY = { 0f, 0.5f };
-    static readonly float[] RotZ = { 0f, 180f };
+
+    // attach offsets (carried person relative to you)
+    // index 2 (arms) is a first guess: adjust if it looks wrong
+    static readonly float[] OffX = { 0f, 0.27f, 0f };
+    static readonly float[] OffY = { -0.07f, 0.15f, 0.35f };
+    static readonly float[] OffZ = { 0.45f, 0.63f, 0.30f };
+    static readonly float[] RotX = { 0f, 0.5f, 0f };
+    static readonly float[] RotY = { 0f, 0.5f, 90f };
+    static readonly float[] RotZ = { 0f, 180f, 0f };
+
+    // box carry clips: idle / walk / run (switches with your speed)
+    static readonly string[][] BoxClips = {
+        new string[] { "box_carryidle", "idle" },
+        new string[] { "box_carrywalk", "walk" },
+        new string[] { "box_carryrun", "run" }
+    };
+
+    // UI position (top-left corner of the screen)
+    const float MenuX = 0.16f;      // centre of the menu box
+    const float MenuTop = 0.05f;
+    const float BarX = 0.5f;        // centre of the revive bar
+    const float BarY = 0.86f;
 
     // CPR
     const string CPR_DICT = "mini@cpr@char_a@cpr_str";
@@ -58,6 +72,9 @@ public class CarryRevive : Script
 
     Ped carried;
     bool carriedDead;
+    int carryStyle;
+    int boxState;
+    int nextBoxCheck;
     string curDict = "";
     string curClip = "";
     int nextAnimCheck;
@@ -163,6 +180,22 @@ public class CarryRevive : Script
     }
 
     // ---------- Carry ----------
+    bool PlayBox(Ped p, int state)
+    {
+        for (int k = 0; k < BoxClips[state].Length; k++)
+        {
+            string clip = BoxClips[state][k];
+            Play(p, BOX_DICT, clip, 49);
+            Script.Yield();
+            if (Playing(p, BOX_DICT, clip))
+            {
+                curClip = clip;
+                return true;
+            }
+        }
+        return false;
+    }
+
     void StartCarry(Ped p, Ped t, int style)
     {
         carriedDead = t.IsDead;
@@ -181,10 +214,19 @@ public class CarryRevive : Script
             st = 1;
             LoadDict(CDict[st]);
         }
+        carryStyle = st;
 
         curDict = CDict[st];
         curClip = CClip[st];
-        Play(p, curDict, curClip, 49);
+        if (st == 2)
+        {
+            boxState = 0;
+            PlayBox(p, 0);
+        }
+        else
+        {
+            Play(p, curDict, curClip, 49);
+        }
 
         Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, t, p, 0,
             OffX[st], OffY[st], OffZ[st],
@@ -273,10 +315,14 @@ public class CarryRevive : Script
         Ped t = target;
         Inv.Take(Inv.Revive);
 
+        // keep the body where it lies: no snap to standing
+        // (ClearAllImmediately made the ped pop up), then let it
+        // get up on its own after the ragdoll ends
         Function.Call(Hash.RESURRECT_PED, t);
         t.Health = 150;
-        t.Task.ClearAllImmediately();
-        Function.Call(Hash.SET_PED_TO_RAGDOLL, t, 1500, 1500,
+        Function.Call(Hash.CLEAR_PED_TASKS, t);
+        Function.Call(Hash.SET_ENTITY_VELOCITY, t, 0f, 0f, 0f);
+        Function.Call(Hash.SET_PED_TO_RAGDOLL, t, 2500, 2500,
             0, false, false, false);
 
         StopRevive(p, "");
@@ -291,14 +337,14 @@ public class CarryRevive : Script
         int left = (int)Math.Ceiling((1f - frac) * REVIVE_MS / 1000f);
 
         float w = 0.30f;
-        float cy = 0.86f;
-        Rect(0.5f, cy, w + 0.006f, 0.034f, 0, 0, 0, 190);
+        float cy = BarY;
+        Rect(BarX, cy, w + 0.006f, 0.034f, 0, 0, 0, 190);
         float fw = w * frac;
-        Rect(0.5f - w / 2f + fw / 2f, cy, fw, 0.024f,
+        Rect(BarX - w / 2f + fw / 2f, cy, fw, 0.024f,
             225, 100, 130, 255);
-        DrawText("REVIVING  " + left + "s", 0.5f, cy - 0.048f, 0.45f,
+        DrawText("REVIVING  " + left + "s", BarX, cy - 0.048f, 0.45f,
             255, 255, 255, 255, true);
-        DrawText("Backspace = cancel", 0.5f, cy + 0.025f, 0.28f,
+        DrawText("Backspace = cancel", BarX, cy + 0.025f, 0.28f,
             200, 200, 205, 255, true);
     }
 
@@ -322,23 +368,24 @@ public class CarryRevive : Script
     void DrawMenu(List<string> rows)
     {
         int n = rows.Count;
-        float top = 0.30f;
         float h = 0.12f + n * 0.045f;
-        Rect(0.5f, top + h / 2f - 0.02f, 0.30f, h, 18, 18, 22, 235);
-        DrawText("CARRY", 0.5f, top, 0.5f, 255, 255, 255, 255, true);
+        Rect(MenuX, MenuTop + h / 2f - 0.02f, 0.30f, h,
+            18, 18, 22, 235);
+        DrawText("CARRY", MenuX, MenuTop, 0.5f,
+            255, 255, 255, 255, true);
 
         for (int i = 0; i < n; i++)
         {
-            float y = top + 0.06f + i * 0.045f;
+            float y = MenuTop + 0.06f + i * 0.045f;
             bool on = (i == sel);
             if (on)
-                Rect(0.5f, y + 0.014f, 0.28f, 0.038f,
+                Rect(MenuX, y + 0.014f, 0.28f, 0.038f,
                     225, 100, 130, 255);
-            DrawText(rows[i], 0.5f, y, 0.38f,
+            DrawText(rows[i], MenuX, y, 0.36f,
                 255, 255, 255, 255, true);
         }
-        DrawText("Up/Down = move   Enter = select   Back = close",
-            0.5f, top + 0.075f + n * 0.045f, 0.26f,
+        DrawText("Up/Down move   Enter select   Back close",
+            MenuX, MenuTop + 0.075f + n * 0.045f, 0.24f,
             200, 200, 205, 255, true);
     }
 
@@ -468,8 +515,13 @@ public class CarryRevive : Script
             else
             {
                 // block things that would break the carry
-                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 21, true);
-                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 22, true);
+                // (a body can be carried while sprinting / jumping;
+                //  a living person can not)
+                if (!carriedDead)
+                {
+                    Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 21, true);
+                    Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 22, true);
+                }
                 Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 23, true);
                 Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 24, true);
                 Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 25, true);
@@ -477,7 +529,25 @@ public class CarryRevive : Script
                 Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 141, true);
                 Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 142, true);
 
-                if (now >= nextAnimCheck)
+                if (carryStyle == 2)
+                {
+                    if (now >= nextBoxCheck)
+                    {
+                        nextBoxCheck = now + 250;
+                        float spd = p.Velocity.Length();
+                        int want = spd < 0.4f ? 0 : (spd < 3.2f ? 1 : 2);
+                        if (want != boxState)
+                        {
+                            boxState = want;
+                            PlayBox(p, want);
+                        }
+                        else if (!Playing(p, BOX_DICT, curClip))
+                        {
+                            PlayBox(p, boxState);
+                        }
+                    }
+                }
+                else if (now >= nextAnimCheck)
                 {
                     nextAnimCheck = now + 500;
                     if (curDict != "" && !Playing(p, curDict, curClip))
