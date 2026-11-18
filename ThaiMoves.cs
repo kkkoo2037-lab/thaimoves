@@ -37,12 +37,17 @@ public class ThaiMoves : Script
     const string BANDAGE_DICT = "amb@medic@standing@kneel@idle_a";
     const string BANDAGE_ANIM = "idle_a";
     const int BANDAGE_FLAG = 1;
-    // bandage pose = sitting on the ground (looped)
-    const string SIT_DICT = "amb@world_human_picnic@male@base";
-    const string SIT_ANIM = "base";
-    // fallback if the sit dict fails to load
-    const string SIT_DICT2 = "amb@medic@standing@kneel@idle_a";
-    const string SIT_ANIM2 = "idle_a";
+    // bandage pose = kneel on one knee, leaning forward (looped)
+    // tried in order, first dict that loads is used
+    static readonly string[] SIT_DICTS = {
+        "amb@medic@standing@kneel@idle_a",
+        "amb@medic@standing@tendtodead@idle_a",
+        "amb@medic@standing@tendtodead@base",
+        "amb@world_human_picnic@male@base"
+    };
+    static readonly string[] SIT_ANIMS = {
+        "idle_a", "idle_a", "base", "base"
+    };
 
     // ================= Armor =================
     const int ARMOR_ANIM_MS = 1800;
@@ -147,7 +152,7 @@ public class ThaiMoves : Script
         if (Game.GameTime < nextRequest) return;
         nextRequest = Game.GameTime + 1000;
         Function.Call(Hash.REQUEST_ANIM_DICT, SlideDict);
-        Function.Call(Hash.REQUEST_ANIM_DICT, SIT_DICT);
+        Function.Call(Hash.REQUEST_ANIM_DICT, SIT_DICTS[0]);
     }
 
     // ---------- Main loop ----------
@@ -320,9 +325,16 @@ public class ThaiMoves : Script
     {
         if (sitDict == null)
         {
-            if (LoadDict(SIT_DICT)) { sitDict = SIT_DICT; sitAnim = SIT_ANIM; }
-            else if (LoadDict(SIT_DICT2)) { sitDict = SIT_DICT2; sitAnim = SIT_ANIM2; }
-            else return;
+            for (int i = 0; i < SIT_DICTS.Length; i++)
+            {
+                if (LoadDict(SIT_DICTS[i]))
+                {
+                    sitDict = SIT_DICTS[i];
+                    sitAnim = SIT_ANIMS[i];
+                    break;
+                }
+            }
+            if (sitDict == null) return;
         }
         // flag 1 = loop, -1 = play until stopped
         Function.Call(Hash.TASK_PLAY_ANIM, p, sitDict, sitAnim,
