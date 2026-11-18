@@ -7,20 +7,20 @@ using GTA.Native;
 
 public class ThaiMoves : Script
 {
-    // ================= ปุ่ม =================
-    // คีย์บอร์ด: H=0x48 (พันแผล), B=0x42 (เกราะ), X=0x58 (สไลด์)
+    // ================= Keys =================
+    // Keyboard: H=0x48 (bandage), B=0x42 (armor), X=0x58 (slide)
     int HealKey = 0x48, ArmorKey = 0x42, SlideKey = 0x58;
-    // จอย: L3 = พันแผล, RB = เกราะ (กด A ค้าง + RB = สไลด์)
+    // Pad: L3 = bandage, RB = armor (hold A + RB = slide)
     int PadHeal = 36, PadCover = 44, PadSprint = 21;
 
-    // ================= สไลด์ (ท่าที่ 2) =================
+    // ================= Slide (anim 2) =================
     float SlideSpeed = 12f;
     int SlideTime = 900;
-    float SideDrift = 0.3f;   // + = เบี่ยงขวา, - = เบี่ยงซ้าย, 0 = ตรง
+    float SideDrift = 0.3f;   // + right, - left, 0 straight
     string SlideDict = "missheistfbi3b_ig6_v2";
-    string SlideClip = "rubble_slide_franklin";   // ลองเปลี่ยนเป็น "rubble_slide_michael" ได้
+    string SlideClip = "rubble_slide_franklin";
 
-    // ================= พันแผล =================
+    // ================= Bandage =================
     const int BANDAGE_TOTAL = 60;
     const int BANDAGE_STEP = 10;
     const int BANDAGE_TICK_MS = 500;
@@ -30,18 +30,22 @@ public class ThaiMoves : Script
     const string BANDAGE_DICT2 = "amb@medic@standing@tendtodead@base";
     const string BANDAGE_ANIM2 = "base";
 
-    // ================= ใส่เกราะ =================
+    // ================= Armor =================
     const int ARMOR_ANIM_MS = 1800;
     const string ARMOR_DICT = "clothingtie";
     const string ARMOR_ANIM = "try_tie_positive_a";
-    // ===========================================
+    // ========================================
 
-    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")]
+    static extern IntPtr GetForegroundWindow();
 
     bool hPrev, bPrev, xPrev;
-    bool bandaging; int healLeft, nextHeal, bandageEnd;
-    bool armoring; int armorEnd;
+    bool bandaging;
+    int healLeft, nextHeal, bandageEnd;
+    bool armoring;
+    int armorEnd;
     int slideEnd, nextRequest;
     Vector3 slideDir;
 
@@ -50,27 +54,46 @@ public class ThaiMoves : Script
         Tick += OnTick;
     }
 
-    // ---------- ตัวช่วย ----------
-    static bool PadHeld(int c) { return Function.Call<bool>(Hash.IS_CONTROL_PRESSED, 0, c); }
-    static bool PadHeldDis(int c) { return Function.Call<bool>(Hash.IS_DISABLED_CONTROL_PRESSED, 0, c); }
-    static bool PadJustDis(int c) { return Function.Call<bool>(Hash.IS_DISABLED_CONTROL_JUST_PRESSED, 0, c); }
+    // ---------- Helpers ----------
+    static bool PadHeld(int c)
+    {
+        return Function.Call<bool>(Hash.IS_CONTROL_PRESSED, 0, c);
+    }
+
+    static bool PadHeldDis(int c)
+    {
+        return Function.Call<bool>(
+            Hash.IS_DISABLED_CONTROL_PRESSED, 0, c);
+    }
+
+    static bool PadJustDis(int c)
+    {
+        return Function.Call<bool>(
+            Hash.IS_DISABLED_CONTROL_JUST_PRESSED, 0, c);
+    }
 
     static bool GameFocused()
     {
-        try { return GetForegroundWindow() == Process.GetCurrentProcess().MainWindowHandle; }
+        try
+        {
+            IntPtr w = Process.GetCurrentProcess().MainWindowHandle;
+            return GetForegroundWindow() == w;
+        }
         catch { return true; }
     }
 
     bool KeyDownNow(int vk)
     {
-        return GameFocused() && (GetAsyncKeyState(vk) & 0x8000) != 0;
+        return GameFocused()
+            && (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
 
     bool LoadDict(string dict)
     {
         Function.Call(Hash.REQUEST_ANIM_DICT, dict);
         int tries = 0;
-        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict) && tries++ < 50)
+        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict)
+            && tries++ < 50)
             Script.Yield();
         return Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict);
     }
@@ -78,15 +101,19 @@ public class ThaiMoves : Script
     void PlayAnim(Ped p, string dict, string anim, int ms, int flag)
     {
         if (!LoadDict(dict)) return;
-        Function.Call(Hash.TASK_PLAY_ANIM, p, dict, anim, 8f, -8f, ms, flag, 0f, false, false, false);
+        Function.Call(Hash.TASK_PLAY_ANIM, p, dict, anim,
+            8f, -8f, ms, flag, 0f, false, false, false);
     }
 
-    void PlayAnimFb(Ped p, string d1, string a1, int f1, string d2, string a2, int f2, int ms)
+    void PlayAnimFb(Ped p, string d1, string a1, int f1,
+        string d2, string a2, int f2, int ms)
     {
         if (LoadDict(d1))
-            Function.Call(Hash.TASK_PLAY_ANIM, p, d1, a1, 8f, -8f, ms, f1, 0f, false, false, false);
+            Function.Call(Hash.TASK_PLAY_ANIM, p, d1, a1,
+                8f, -8f, ms, f1, 0f, false, false, false);
         else if (LoadDict(d2))
-            Function.Call(Hash.TASK_PLAY_ANIM, p, d2, a2, 8f, -8f, ms, f2, 0f, false, false, false);
+            Function.Call(Hash.TASK_PLAY_ANIM, p, d2, a2,
+                8f, -8f, ms, f2, 0f, false, false, false);
     }
 
     void StopAnim(Ped p, string dict, string anim)
@@ -94,7 +121,6 @@ public class ThaiMoves : Script
         Function.Call(Hash.STOP_ANIM_TASK, p, dict, anim, 1f);
     }
 
-    // โหลดท่าสไลด์ไว้ล่วงหน้า กดแล้วเล่นทันทีไม่สะดุด
     void KeepLoaded()
     {
         if (Game.GameTime < nextRequest) return;
@@ -102,7 +128,7 @@ public class ThaiMoves : Script
         Function.Call(Hash.REQUEST_ANIM_DICT, SlideDict);
     }
 
-    // ---------- ลูปหลัก ----------
+    // ---------- Main loop ----------
     void OnTick(object sender, EventArgs e)
     {
         try { Tick2(); }
@@ -112,60 +138,81 @@ public class ThaiMoves : Script
     void Tick2()
     {
         Ped p = Game.Player.Character;
-        if (p == null || !p.Exists() || p.IsDead || p.IsInVehicle()) { slideEnd = 0; return; }
+        if (p == null || !p.Exists() || p.IsDead || p.IsInVehicle())
+        {
+            slideEnd = 0;
+            return;
+        }
 
         KeepLoaded();
         int now = Game.GameTime;
         bool sliding = slideEnd > now;
 
-        // กันปุ่มจอยทำงานอย่างอื่น (ย่อง / เข้าที่กำบัง)
+        // block default L3 (stealth) and RB (cover)
         Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, PadHeal, true);
         Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, PadCover, true);
 
-        // กด A (วิ่ง) ค้างอยู่ไหม
         bool aHeld = PadHeld(PadSprint) || PadHeldDis(PadSprint);
 
-        // คีย์บอร์ด
-        bool h = KeyDownNow(HealKey), b = KeyDownNow(ArmorKey), x = KeyDownNow(SlideKey);
-        bool kbHeal = h && !hPrev, kbArmor = b && !bPrev, kbSlide = x && !xPrev;
-        hPrev = h; bPrev = b; xPrev = x;
+        // keyboard
+        bool h = KeyDownNow(HealKey);
+        bool b = KeyDownNow(ArmorKey);
+        bool x = KeyDownNow(SlideKey);
+        bool kbHeal = h && !hPrev;
+        bool kbArmor = b && !bPrev;
+        bool kbSlide = x && !xPrev;
+        hPrev = h;
+        bPrev = b;
+        xPrev = x;
 
-        // จอย
+        // pad + requests from the bag menu
         bool coverPressed = PadJustDis(PadCover);
-        bool bandagePressed = PadJustDis(PadHeal) || kbHeal;
-        bool armorPressed = (coverPressed && !aHeld) || kbArmor;
+        bool bandagePressed = PadJustDis(PadHeal) || kbHeal
+            || Inv.WantBandage;
+        bool armorPressed = (coverPressed && !aHeld) || kbArmor
+            || Inv.WantArmor;
         bool slidePressed = (coverPressed && aHeld) || kbSlide;
+        Inv.WantBandage = false;
+        Inv.WantArmor = false;
 
-        // ---------- สไลด์ ----------
+        // ---------- Slide ----------
         if (slidePressed && !sliding)
         {
             StartSlide(p, now);
             sliding = true;
         }
 
-        // ---------- พันแผล ----------
+        // ---------- Bandage (needs the item) ----------
         if (bandagePressed && !bandaging && !sliding)
         {
             if (p.Health >= p.MaxHealth)
-                GTA.UI.Screen.ShowSubtitle("เลือดเต็มอยู่แล้ว");
+                GTA.UI.Screen.ShowSubtitle("Health is full");
+            else if (!Inv.Take(Inv.Bandage))
+                GTA.UI.Screen.ShowSubtitle(
+                    "No bandage - buy one at a shop");
             else
             {
                 bandaging = true;
                 healLeft = BANDAGE_TOTAL;
                 nextHeal = now + BANDAGE_TICK_MS;
-                bandageEnd = now + (BANDAGE_TOTAL / BANDAGE_STEP) * BANDAGE_TICK_MS;
-                PlayAnimFb(p, BANDAGE_DICT, BANDAGE_ANIM, BANDAGE_FLAG, BANDAGE_DICT2, BANDAGE_ANIM2, 49, bandageEnd - now);
+                int steps = BANDAGE_TOTAL / BANDAGE_STEP;
+                bandageEnd = now + steps * BANDAGE_TICK_MS;
+                PlayAnimFb(p, BANDAGE_DICT, BANDAGE_ANIM,
+                    BANDAGE_FLAG, BANDAGE_DICT2, BANDAGE_ANIM2,
+                    49, bandageEnd - now);
             }
         }
         if (bandaging)
         {
             if (now >= nextHeal && healLeft > 0)
             {
-                p.Health = Math.Min(p.MaxHealth, p.Health + BANDAGE_STEP);
+                int hp = p.Health + BANDAGE_STEP;
+                p.Health = Math.Min(p.MaxHealth, hp);
                 healLeft -= BANDAGE_STEP;
                 nextHeal = now + BANDAGE_TICK_MS;
             }
-            if (healLeft <= 0 || now >= bandageEnd || p.Health >= p.MaxHealth)
+            if (healLeft <= 0 || now >= bandageEnd
+                || p.Health >= p.MaxHealth)
             {
                 bandaging = false;
                 StopAnim(p, BANDAGE_DICT, BANDAGE_ANIM);
@@ -173,16 +220,20 @@ public class ThaiMoves : Script
             }
         }
 
-        // ---------- ใส่เกราะ ----------
+        // ---------- Armor (needs the item) ----------
         if (armorPressed && !armoring && !sliding)
         {
             if (p.Armor >= 100)
-                GTA.UI.Screen.ShowSubtitle("เกราะเต็มอยู่แล้ว");
+                GTA.UI.Screen.ShowSubtitle("Armor is full");
+            else if (!Inv.Take(Inv.Armor))
+                GTA.UI.Screen.ShowSubtitle(
+                    "No body armor - buy one at a shop");
             else
             {
                 armoring = true;
                 armorEnd = now + ARMOR_ANIM_MS;
-                PlayAnim(p, ARMOR_DICT, ARMOR_ANIM, ARMOR_ANIM_MS, 49);
+                PlayAnim(p, ARMOR_DICT, ARMOR_ANIM,
+                    ARMOR_ANIM_MS, 49);
             }
         }
         if (armoring && now >= armorEnd)
@@ -190,15 +241,17 @@ public class ThaiMoves : Script
             armoring = false;
             p.Armor = 100;
             StopAnim(p, ARMOR_DICT, ARMOR_ANIM);
-            GTA.UI.Screen.ShowSubtitle("ใส่เกราะแล้ว");
+            GTA.UI.Screen.ShowSubtitle("Armor equipped");
         }
 
-        // ตัวถึกขึ้นเมื่อมีเกราะ: ไม่โดนฮิตคริติคอล และล้มยากขึ้น
+        // tougher while armored
         bool armored = p.Armor > 0;
-        Function.Call(Hash.SET_PED_SUFFERS_CRITICAL_HITS, p, !armored);
-        Function.Call(Hash.SET_PED_CAN_RAGDOLL_FROM_PLAYER_IMPACT, p, !armored);
+        Function.Call(Hash.SET_PED_SUFFERS_CRITICAL_HITS,
+            p, !armored);
+        Function.Call(Hash.SET_PED_CAN_RAGDOLL_FROM_PLAYER_IMPACT,
+            p, !armored);
 
-        // ---------- ระหว่างสไลด์ ----------
+        // ---------- While sliding ----------
         if (slideEnd > now)
         {
             Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 21, true);
@@ -220,8 +273,11 @@ public class ThaiMoves : Script
 
     void StartSlide(Ped p, int now)
     {
-        // ยกเลิกพันแผล/ใส่เกราะที่ค้างอยู่
-        if (armoring) { armoring = false; StopAnim(p, ARMOR_DICT, ARMOR_ANIM); }
+        if (armoring)
+        {
+            armoring = false;
+            StopAnim(p, ARMOR_DICT, ARMOR_ANIM);
+        }
         if (bandaging)
         {
             bandaging = false;
@@ -236,13 +292,13 @@ public class ThaiMoves : Script
 
         slideEnd = now + SlideTime;
 
-        // ผลักตัวทันทีเฟรมแรก
         Vector3 v = slideDir * SlideSpeed;
         v.Z = p.Velocity.Z;
         p.Velocity = v;
 
         if (Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, SlideDict))
-            Function.Call(Hash.TASK_PLAY_ANIM, p, SlideDict, SlideClip,
-                50f, -8f, SlideTime, 0, 0f, false, false, false);
+            Function.Call(Hash.TASK_PLAY_ANIM, p, SlideDict,
+                SlideClip, 50f, -8f, SlideTime, 0, 0f,
+                false, false, false);
     }
 }
