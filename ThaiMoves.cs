@@ -37,10 +37,12 @@ public class ThaiMoves : Script
     const string BANDAGE_DICT = "amb@medic@standing@kneel@idle_a";
     const string BANDAGE_ANIM = "idle_a";
     const int BANDAGE_FLAG = 1;
-    // bandage pose = the slide clip, frozen at this time (ms)
-    const int BANDAGE_POSE_MS = 900;
-    const string BANDAGE_DICT2 = "amb@medic@standing@tendtodead@base";
-    const string BANDAGE_ANIM2 = "base";
+    // bandage pose = sitting on the ground (looped)
+    const string SIT_DICT = "amb@world_human_picnic@male@base";
+    const string SIT_ANIM = "base";
+    // fallback if the sit dict fails to load
+    const string SIT_DICT2 = "amb@medic@standing@kneel@idle_a";
+    const string SIT_ANIM2 = "idle_a";
 
     // ================= Armor =================
     const int ARMOR_ANIM_MS = 1800;
@@ -60,8 +62,8 @@ public class ThaiMoves : Script
     int armorEnd;
     int slideEnd, nextRequest;
     Vector3 slideDir;
-    bool poseFrozen;
-    int poseStart, nextPoseCheck;
+    int nextPoseCheck;
+    string sitDict, sitAnim;
 
     public ThaiMoves()
     {
@@ -145,6 +147,7 @@ public class ThaiMoves : Script
         if (Game.GameTime < nextRequest) return;
         nextRequest = Game.GameTime + 1000;
         Function.Call(Hash.REQUEST_ANIM_DICT, SlideDict);
+        Function.Call(Hash.REQUEST_ANIM_DICT, SIT_DICT);
     }
 
     // ---------- Main loop ----------
@@ -312,69 +315,40 @@ public class ThaiMoves : Script
         }
     }
 
-    // ---------- Bandage pose (slide clip, frozen) ----------
-    void PlaySlideClipLocked(Ped p)
+    // ---------- Bandage pose (sitting on the ground) ----------
+    void PlaySit(Ped p)
     {
-        Function.Call(Hash.TASK_PLAY_ANIM, p, SlideDict, SlideClip,
-            8f, -8f, -1, 8, 0f, true, true, true);
+        if (sitDict == null)
+        {
+            if (LoadDict(SIT_DICT)) { sitDict = SIT_DICT; sitAnim = SIT_ANIM; }
+            else if (LoadDict(SIT_DICT2)) { sitDict = SIT_DICT2; sitAnim = SIT_ANIM2; }
+            else return;
+        }
+        // flag 1 = loop, -1 = play until stopped
+        Function.Call(Hash.TASK_PLAY_ANIM, p, sitDict, sitAnim,
+            4f, -4f, -1, 1, 0f, false, false, false);
     }
 
     void StartBandagePose(Ped p, int now)
     {
-        if (!LoadDict(SlideDict)) return;
-        PlaySlideClipLocked(p);
-        poseStart = now;
-        poseFrozen = false;
+        PlaySit(p);
         nextPoseCheck = now + 300;
-    }
-
-    void FreezeClip(Ped p)
-    {
-        Function.Call(Hash.SET_ENTITY_ANIM_SPEED, p,
-            SlideDict, SlideClip, 0f);
     }
 
     void KeepPose(Ped p, int now)
     {
-        bool playing = Function.Call<bool>(
-            Hash.IS_ENTITY_PLAYING_ANIM, p, SlideDict, SlideClip, 3);
-
-        if (!poseFrozen)
-        {
-            if (now - poseStart < BANDAGE_POSE_MS) return;
-            if (!playing)
-            {
-                // clip already ended: replay it and jump to its end
-                PlaySlideClipLocked(p);
-                Script.Yield();
-                Function.Call(Hash.SET_ENTITY_ANIM_CURRENT_TIME, p,
-                    SlideDict, SlideClip, 0.95f);
-            }
-            FreezeClip(p);
-            poseFrozen = true;
-            return;
-        }
-
-        if (now < nextPoseCheck) return;
+        if (now < nextPoseCheck || sitDict == null) return;
         nextPoseCheck = now + 300;
-        if (!playing)
-        {
-            PlaySlideClipLocked(p);
-            Script.Yield();
-            Function.Call(Hash.SET_ENTITY_ANIM_CURRENT_TIME, p,
-                SlideDict, SlideClip, 0.95f);
-        }
-        FreezeClip(p);
+        bool playing = Function.Call<bool>(
+            Hash.IS_ENTITY_PLAYING_ANIM, p, sitDict, sitAnim, 3);
+        if (!playing) PlaySit(p);
     }
 
     void EndBandagePose(Ped p)
     {
-        Function.Call(Hash.SET_ENTITY_ANIM_SPEED, p,
-            SlideDict, SlideClip, 1f);
-        Function.Call(Hash.STOP_ANIM_TASK, p,
-            SlideDict, SlideClip, 1f);
+        if (sitDict != null)
+            Function.Call(Hash.STOP_ANIM_TASK, p, sitDict, sitAnim, 1f);
         p.Task.ClearAll();
-        poseFrozen = false;
     }
 
     static void DisableMove()
