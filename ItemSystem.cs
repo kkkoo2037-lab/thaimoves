@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using GTA;
@@ -38,6 +39,9 @@ public class ItemSystem : Script
     int AnywhereKey = 0x4F;   // O (only if ShopAnywhere = true)
     int KUp = 0x26, KDown = 0x28, KLeft = 0x25, KRight = 0x27;
     int KEnter = 0x0D, KBack = 0x08;
+    int KTab = 0x09;          // next category
+    int KBuySell = 0x54;      // T  buy / sell
+    int KQty = 0x51;          // Q  quantity 1 / 5 / 10
 
     // true = open the shop from anywhere with the O key
     const bool ShopAnywhere = false;
@@ -47,8 +51,97 @@ public class ItemSystem : Script
         "Bandage", "Body Armor", "Medkit",
         "Water", "Burger", "Energy Drink"
     };
+    static readonly string[] Desc = {
+        "Heals 60 HP over time (L3 / H)",
+        "Full body armor (RB / B)",
+        "Instantly restores full health",
+        "Restores stamina, +5 HP",
+        "Restores 25 HP",
+        "Speed boost for 30 seconds"
+    };
+    static readonly int[] Cat = { 1, 2, 1, 3, 3, 3 };
+    static readonly string[] CatNames = {
+        "ALL", "MEDICAL", "ARMOR", "FOOD"
+    };
     static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60 };
     static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20 };
+    static readonly int[] QtyOptions = { 1, 5, 10 };
+
+    // Pixel icons 10x10 ('.' = empty)
+    static readonly string[][] Icons = {
+        new string[] {   // bandage
+            "..........",
+            "..........",
+            ".YYYYYYYY.",
+            "YYYYYYYYYY",
+            "YYY.WW.YYY",
+            "YYY.WW.YYY",
+            "YYYYYYYYYY",
+            ".YYYYYYYY.",
+            "..........",
+            ".........."
+        },
+        new string[] {   // body armor
+            "..BB..BB..",
+            ".BBB..BBB.",
+            "BBBBBBBBBB",
+            "BLBBBBBBLB",
+            "BLBDBBDBLB",
+            "BBBBBBBBBB",
+            "BBBBBBBBBB",
+            ".BBBBBBBB.",
+            ".BBBBBBBB.",
+            "..BBBBBB.."
+        },
+        new string[] {   // medkit
+            "...GGGG...",
+            "..G....G..",
+            "WWWWWWWWWW",
+            "WWWWRRWWWW",
+            "WWWWRRWWWW",
+            "WWRRRRRRWW",
+            "WWRRRRRRWW",
+            "WWWWRRWWWW",
+            "WWWWRRWWWW",
+            "WWWWWWWWWW"
+        },
+        new string[] {   // water
+            "...BBBB...",
+            "...BBBB...",
+            "...LLLL...",
+            "..LLLLLL..",
+            "..LLWWLL..",
+            "..LLLLLL..",
+            "..LLLLLL..",
+            "..LLLLLL..",
+            "..LLLLLL..",
+            "..BBBBBB.."
+        },
+        new string[] {   // burger
+            "..OOOOOO..",
+            ".OOWOOOOO.",
+            "OOOOOOWOOO",
+            "..EEEEEE..",
+            ".RRRRRRRR.",
+            "..NNNNNN..",
+            ".NNNNNNNN.",
+            "..OOOOOO..",
+            ".OOOOOOOO.",
+            ".........."
+        },
+        new string[] {   // energy drink
+            "...GGGG...",
+            "..RRRRRR..",
+            "..RYYYYR..",
+            "..RYRRYR..",
+            "..RYYYYR..",
+            "..RRRRRR..",
+            "..RRYYRR..",
+            "..RRRRRR..",
+            "..RRRRRR..",
+            "...GGGG..."
+        },
+    };
 
     static readonly Vector3[] Shops = {
         new Vector3(-48.5f, -1757.5f, 29.4f),
@@ -72,10 +165,14 @@ public class ItemSystem : Script
     bool[] prev = new bool[256];
     int mode;          // 0 closed, 1 bag, 2 shop
     bool sellMode;
-    int sel;
+    int catSel;        // 0..3
+    int sel;           // index in visible list
+    int scrollRow;
+    int qtyIdx;
     bool blipsMade;
     int boostEnd;
     int nextSave;
+    List<int> vis = new List<int>();
 
     public ItemSystem()
     {
@@ -138,6 +235,12 @@ public class ItemSystem : Script
     static void Msg(string t)
     {
         GTA.UI.Screen.ShowSubtitle(t, 1800);
+    }
+
+    static void Rect(float cx, float cy, float w, float h,
+        int r, int g, int b, int a)
+    {
+        Function.Call(Hash.DRAW_RECT, cx, cy, w, h, r, g, b, a);
     }
 
     static void DrawText(string s, float x, float y, float scale,
@@ -260,17 +363,19 @@ public class ItemSystem : Script
     void BuyOrSell(int id)
     {
         Player pl = Game.Player;
+        int q = QtyOptions[qtyIdx];
         if (!sellMode)
         {
-            if (pl.Money < BuyPrice[id])
+            int total = BuyPrice[id] * q;
+            if (pl.Money < total)
             {
                 Msg("Not enough money");
                 return;
             }
-            pl.Money = pl.Money - BuyPrice[id];
-            Inv.Qty[id]++;
+            pl.Money = pl.Money - total;
+            Inv.Qty[id] += q;
             Inv.Dirty = true;
-            Msg("Bought " + Names[id]);
+            Msg("Bought " + q + " x " + Names[id]);
         }
         else
         {
@@ -279,56 +384,190 @@ public class ItemSystem : Script
                 Msg("You don't have this item");
                 return;
             }
-            Inv.Qty[id]--;
-            pl.Money = pl.Money + SellPrice[id];
+            if (q > Inv.Qty[id]) q = Inv.Qty[id];
+            Inv.Qty[id] -= q;
+            pl.Money = pl.Money + SellPrice[id] * q;
             Inv.Dirty = true;
-            Msg("Sold " + Names[id]);
+            Msg("Sold " + q + " x " + Names[id]);
         }
     }
 
-    // ---------- Menu drawing ----------
-    int RowCount()
+    // ---------- Visible list ----------
+    void BuildVisible()
     {
-        int n = Names.Length;
-        return mode == 1 ? n + 1 : n + 2;
-    }
-
-    string RowText(int i)
-    {
-        int n = Names.Length;
-        if (mode == 1)
+        vis.Clear();
+        for (int id = 0; id < Names.Length; id++)
         {
-            if (i == n) return "Close";
-            return Names[i] + "   x" + Inv.Qty[i];
+            if (catSel != 0 && Cat[id] != catSel) continue;
+            bool needOwned = (mode == 1) || (mode == 2 && sellMode);
+            if (needOwned && Inv.Qty[id] <= 0) continue;
+            vis.Add(id);
         }
-        if (i == 0)
-            return sellMode ? "Mode:  < SELL >" : "Mode:  < BUY >";
-        if (i == n + 1) return "Close";
-        int id = i - 1;
-        int price = sellMode ? SellPrice[id] : BuyPrice[id];
-        return Names[id] + "   $" + price + "   (own " + Inv.Qty[id] + ")";
+        if (sel >= vis.Count) sel = vis.Count - 1;
+        if (sel < 0) sel = 0;
     }
 
-    void DrawMenu()
+    // ---------- Drawing ----------
+    static void PixelColor(char ch, out int r, out int g, out int b)
     {
-        int rows = RowCount();
-        float h = 0.10f + rows * 0.036f;
-        float cy = 0.20f + h / 2f;
-        Function.Call(Hash.DRAW_RECT,
-            0.50f, cy, 0.34f, h, 0, 0, 0, 190);
-
-        string title = mode == 1 ? "BAG" : "ITEM SHOP";
-        DrawText(title + "     $" + Game.Player.Money,
-            0.34f, 0.21f, 0.5f, 255, 255, 255, 255, false);
-
-        for (int i = 0; i < rows; i++)
+        r = 255; g = 255; b = 255;
+        switch (ch)
         {
-            bool on = (i == sel);
-            int g = on ? 220 : 255;
-            int b = on ? 0 : 255;
-            DrawText(RowText(i), 0.34f, 0.255f + i * 0.036f, 0.4f,
-                255, g, b, 255, false);
+            case 'W': r = 235; g = 235; b = 235; break;
+            case 'R': r = 210; g = 50; b = 50; break;
+            case 'G': r = 150; g = 150; b = 155; break;
+            case 'D': r = 60; g = 60; b = 66; break;
+            case 'B': r = 70; g = 140; b = 220; break;
+            case 'L': r = 150; g = 200; b = 240; break;
+            case 'Y': r = 235; g = 190; b = 110; break;
+            case 'O': r = 200; g = 130; b = 55; break;
+            case 'N': r = 120; g = 70; b = 35; break;
+            case 'E': r = 90; g = 170; b = 70; break;
         }
+    }
+
+    static void DrawIcon(int id, float cx, float cy, float size)
+    {
+        string[] rows = Icons[id];
+        float ph = size / 10f;
+        float pw = ph * 9f / 16f;
+        for (int y = 0; y < 10; y++)
+        {
+            for (int x = 0; x < 10; x++)
+            {
+                char ch = rows[y][x];
+                if (ch == '.') continue;
+                int r, g, b;
+                PixelColor(ch, out r, out g, out b);
+                Rect(cx + (x - 4.5f) * pw,
+                    cy + (y - 4.5f) * ph,
+                    pw + 0.0003f, ph + 0.0004f, r, g, b, 255);
+            }
+        }
+    }
+
+    void DrawUi(Ped p)
+    {
+        // panel
+        float pcx = 0.5f, pcy = 0.5f, pw = 0.64f, ph = 0.64f;
+        Rect(pcx, pcy, pw, ph, 18, 18, 22, 235);
+        // sidebar
+        Rect(0.245f, pcy, 0.13f, ph, 26, 26, 31, 245);
+
+        string title = mode == 1 ? "INVENTORY" : "SHOP";
+        DrawText(title, 0.195f, 0.20f, 0.45f,
+            230, 230, 235, 255, false);
+        if (mode == 2)
+        {
+            string ms = sellMode ? "SELL" : "BUY";
+            DrawText(ms, 0.195f, 0.235f, 0.38f,
+                230, 100, 130, 255, false);
+        }
+
+        // categories
+        for (int i = 0; i < CatNames.Length; i++)
+        {
+            float cy = 0.30f + i * 0.05f;
+            bool on = (i == catSel);
+            if (on)
+                Rect(0.245f, cy + 0.012f, 0.12f, 0.040f,
+                    120, 50, 70, 200);
+            DrawText(CatNames[i], 0.200f, cy, 0.36f,
+                on ? 255 : 190, on ? 255 : 190, on ? 255 : 195,
+                255, false);
+        }
+
+        BuildVisible();
+
+        // grid
+        float x0 = 0.335f, y0 = 0.215f;
+        float tw = 0.068f, th = 0.125f;
+        float gx = 0.075f, gy = 0.135f;
+        int cols = 6;
+        int rowsShown = 3;
+
+        int selRow = sel / cols;
+        if (selRow < scrollRow) scrollRow = selRow;
+        if (selRow >= scrollRow + rowsShown)
+            scrollRow = selRow - rowsShown + 1;
+        if (scrollRow < 0) scrollRow = 0;
+
+        if (vis.Count == 0)
+        {
+            string empty = mode == 1
+                ? "Your bag is empty"
+                : "Nothing to show";
+            DrawText(empty, 0.57f, 0.38f, 0.45f,
+                170, 170, 175, 255, true);
+        }
+
+        int start = scrollRow * cols;
+        int end = Math.Min(vis.Count, start + cols * rowsShown);
+        for (int i = start; i < end; i++)
+        {
+            int id = vis[i];
+            int rr = (i - start) / cols;
+            int cc = (i - start) % cols;
+            float tx = x0 + cc * gx;
+            float ty = y0 + rr * gy;
+            float tcx = tx + tw / 2f;
+            float tcy = ty + th / 2f;
+
+            if (i == sel)
+                Rect(tcx, tcy, tw + 0.004f, th + 0.007f,
+                    225, 100, 130, 255);
+            Rect(tcx, tcy, tw, th, 36, 36, 42, 255);
+
+            string top;
+            if (mode == 1) top = "x" + Inv.Qty[id];
+            else if (sellMode) top = "$" + SellPrice[id];
+            else top = "$" + BuyPrice[id];
+            DrawText(top, tx + 0.005f, ty + 0.004f, 0.30f,
+                255, 255, 255, 255, false);
+
+            DrawIcon(id, tcx, ty + 0.058f, 0.060f);
+
+            DrawText(Names[id], tcx, ty + th - 0.032f, 0.28f,
+                235, 235, 240, 255, true);
+        }
+
+        // detail strip
+        Rect(0.57f, 0.717f, 0.49f, 0.085f, 28, 28, 34, 255);
+        if (vis.Count > 0)
+        {
+            int id = vis[sel];
+            int q = QtyOptions[qtyIdx];
+            DrawText(Names[id] + " - " + Desc[id],
+                0.335f, 0.680f, 0.34f, 255, 255, 255, 255, false);
+            string line;
+            if (mode == 1)
+                line = "Owned: " + Inv.Qty[id] + "     Enter = use";
+            else if (sellMode)
+                line = "Sell x" + q + " = $" + (SellPrice[id] * q)
+                    + "     Owned: " + Inv.Qty[id]
+                    + "     Enter = sell";
+            else
+                line = "Buy x" + q + " = $" + (BuyPrice[id] * q)
+                    + "     Owned: " + Inv.Qty[id]
+                    + "     Enter = buy";
+            DrawText(line, 0.335f, 0.710f, 0.32f,
+                230, 100, 130, 255, false);
+        }
+
+        // stats bar
+        string stats = "$" + Game.Player.Money
+            + "      HP " + p.Health
+            + "      ARMOR " + p.Armor;
+        DrawText(stats, 0.335f, 0.762f, 0.34f,
+            255, 255, 255, 255, false);
+
+        // hints
+        string hint = mode == 1
+            ? "Arrows move   Tab category   Enter use   Back close"
+            : "Arrows move   Tab category   T buy/sell   "
+                + "Q qty   Enter confirm   Back close";
+        DrawText(hint, 0.5f, 0.833f, 0.30f,
+            200, 200, 205, 255, true);
     }
 
     // ---------- Main loop ----------
@@ -336,6 +575,16 @@ public class ItemSystem : Script
     {
         try { Tick2(); }
         catch (Exception) { }
+    }
+
+    void OpenMenu(int m)
+    {
+        mode = m;
+        sel = 0;
+        scrollRow = 0;
+        catSel = 0;
+        sellMode = false;
+        qtyIdx = 0;
     }
 
     void Tick2()
@@ -351,6 +600,9 @@ public class ItemSystem : Script
         bool kRight = Pressed(KRight);
         bool kEnter = Pressed(KEnter);
         bool kBack = Pressed(KBack);
+        bool kTab = Pressed(KTab);
+        bool kBS = Pressed(KBuySell);
+        bool kQty = Pressed(KQty);
 
         if (p == null || !p.Exists() || p.IsDead)
         {
@@ -402,32 +654,18 @@ public class ItemSystem : Script
                 {
                     DrawText("Press E - Item Shop",
                         0.5f, 0.88f, 0.5f, 255, 255, 255, 255, true);
-                    if (kShop || PadJust(51))
-                    {
-                        mode = 2;
-                        sel = 0;
-                        sellMode = false;
-                    }
+                    if (kShop || PadJust(51)) OpenMenu(2);
                 }
             }
 
-            if (ShopAnywhere && kAny)
-            {
-                mode = 2;
-                sel = 0;
-                sellMode = false;
-            }
+            if (ShopAnywhere && kAny) OpenMenu(2);
         }
 
         // ---------- bag key ----------
         if (kBag)
         {
             if (mode != 0) mode = 0;
-            else if (!p.IsInVehicle())
-            {
-                mode = 1;
-                sel = 0;
-            }
+            else if (!p.IsInVehicle()) OpenMenu(1);
         }
 
         // ---------- menu ----------
@@ -435,33 +673,51 @@ public class ItemSystem : Script
 
         Function.Call(Hash.DISABLE_ALL_CONTROL_ACTIONS, 0);
 
-        int rows = RowCount();
-        int n = Names.Length;
-        if (kUp || PadJustDis(172)) sel = (sel + rows - 1) % rows;
-        if (kDown || PadJustDis(173)) sel = (sel + 1) % rows;
-
+        bool up = kUp || PadJustDis(172);
+        bool down = kDown || PadJustDis(173);
         bool left = kLeft || PadJustDis(174);
         bool right = kRight || PadJustDis(175);
-        if (mode == 2 && sel == 0 && (left || right))
-            sellMode = !sellMode;
+        bool enter = kEnter || PadJustDis(201);
+        bool back = kBack || PadJustDis(202);
+        bool tab = kTab || PadJustDis(206);
+        bool buySell = kBS || PadJustDis(204);
+        bool qty = kQty || PadJustDis(203);
 
-        if (kBack || PadJustDis(202)) mode = 0;
+        BuildVisible();
+        int cols = 6;
+        if (up && sel - cols >= 0) sel -= cols;
+        if (down && sel + cols < vis.Count) sel += cols;
+        if (left && sel > 0) sel--;
+        if (right && sel + 1 < vis.Count) sel++;
 
-        if (kEnter || PadJustDis(201))
+        if (tab)
         {
-            if (mode == 1)
+            catSel = (catSel + 1) % CatNames.Length;
+            sel = 0;
+            scrollRow = 0;
+        }
+        if (mode == 2 && buySell)
+        {
+            sellMode = !sellMode;
+            sel = 0;
+            scrollRow = 0;
+        }
+        if (mode == 2 && qty)
+            qtyIdx = (qtyIdx + 1) % QtyOptions.Length;
+
+        if (back) mode = 0;
+
+        if (enter && mode != 0)
+        {
+            BuildVisible();
+            if (vis.Count > 0)
             {
-                if (sel == n) mode = 0;
-                else UseItem(p, sel);
-            }
-            else
-            {
-                if (sel == 0) sellMode = !sellMode;
-                else if (sel == n + 1) mode = 0;
-                else BuyOrSell(sel - 1);
+                int id = vis[sel];
+                if (mode == 1) UseItem(p, id);
+                else BuyOrSell(id);
             }
         }
 
-        if (mode != 0) DrawMenu();
+        if (mode != 0) DrawUi(p);
     }
 }
