@@ -570,112 +570,100 @@ public class ItemSystem : Script
         DrawIcon(id, NXd(cx), cy / DH, size / DH * 0.9f);
     }
 
+    // native fill (drawn under sprites) + PNG frame on top.
+    // band = frame thickness baked into the PNG, m = PNG glow margin
+    void Frame(string spr, float x, float y, float w, float h,
+        float band, float m, int r, int g, int b)
+    {
+        PR(x + band, y + band, w - 2f * band, h - 2f * band, r, g, b, 255);
+        if (!Spr(spr, x - m, y - m, w + 2f * m, h + 2f * m))
+            PR(x, y, w, h, r, g, b, 255);
+    }
+
+    void Panel(string spr, float x, float y, float w, float h)
+    {
+        PR(x + 8f, y + 8f, w - 16f, 56f, 56, 16, 66, 255);
+        PR(x + 8f, y + 66f, w - 16f, h - 74f, 22, 10, 30, 255);
+        if (!Spr(spr, x - 10f, y - 10f, w + 20f, h + 20f))
+        {
+            PR(x - 1f, y - 1f, w + 2f, h + 2f, 255, 63, 180, 230);
+            PR(x, y, w, h, 22, 10, 30, 255);
+            PR(x, y, w, 64f, 56, 16, 66, 255);
+            PR(x, y + 64f, w, 2f, 255, 63, 180, 255);
+        }
+    }
+
     void Sidebar(float x, float y)
     {
         for (int i = 0; i < CatNames.Length; i++)
         {
             float sy = y + 80f + i * 44f;
             bool on = (i == catSel);
-            string f = on ? (focus == 0 ? "cat_on.png" : "cat_dim.png")
-                          : "cat_off.png";
-            if (!Spr(f, x + 10f, sy, 116f, 38f))
-            {
-                if (on && focus == 0) PR(x + 10f, sy, 116f, 38f, 255, 63, 180, 240);
-                else if (on) PR(x + 10f, sy, 116f, 38f, 150, 40, 110, 230);
-                else PR(x + 10f, sy, 116f, 38f, 38, 22, 44, 220);
-            }
+            if (on && focus == 0)
+                Frame("cat_on.png", x + 10f, sy, 116f, 38f, 4f, 0f, 255, 90, 200);
+            else if (on)
+                Frame("cat_dim.png", x + 10f, sy, 116f, 38f, 4f, 0f, 150, 45, 115);
+            else
+                Frame("cat_off.png", x + 10f, sy, 116f, 38f, 4f, 0f, 44, 26, 54);
             PT(CatNames[i], x + 24f, sy + 8f, 0.34f, 255, 255, 255, 0);
         }
     }
 
-    // Bag (mode 1) or Shop (mode 2): one centered panel
     void DrawUi(Ped p)
     {
         BuildVisible();
         bool shop = (mode == 2);
-        int q = QtyOptions[qtyIdx];
+        int cols = shop ? 1 : BCols;
+        int rowsShown = shop ? 5 : BRows;
 
-        int selRow = sel / BCols;
+        int selRow = sel / cols;
         if (selRow < scrollRow) scrollRow = selRow;
-        if (selRow >= scrollRow + BRows) scrollRow = selRow - BRows + 1;
+        if (selRow >= scrollRow + rowsShown)
+            scrollRow = selRow - rowsShown + 1;
         if (scrollRow < 0) scrollRow = 0;
 
         Rect(0.5f, 0.5f, 1f, 1f, 0, 0, 0, 120);   // dim background
 
+        if (shop) DrawShop(p, cols, rowsShown);
+        else DrawBag(p, cols, rowsShown);
+    }
+
+    // ---------------- BAG: icon grid ----------------
+    void DrawBag(Ped p, int cols, int rowsShown)
+    {
         float bx = 320f, by = 110f, bw = 640f, bh = 500f;
-        if (!Spr(shop ? "panel_shop.png" : "panel_bag.png",
-            bx - 10f, by - 10f, bw + 20f, bh + 20f))
-        {
-            PR(bx - 1f, by - 1f, bw + 2f, bh + 2f, 255, 63, 180, 230);
-            PR(bx, by, bw, bh, 20, 10, 24, 240);
-            PR(bx, by, bw, 64f, 44, 14, 48, 255);
-            PR(bx, by + 64f, bw, 2f, 255, 63, 180, 255);
-        }
-        PT(shop ? (sellMode ? "SELL" : "SHOP") : "BAG",
-            bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
-        PT(shop ? ((sellMode ? "Selling" : "Buying") + "   Qty x" + q)
-                : "Check the items in your bag",
-            bx + 76f, by + 38f, 0.3f, 255, 150, 215, 0);
-        if (!Spr("pill.png", bx + bw - 190f, by + 16f, 170f, 32f))
-            PR(bx + bw - 190f, by + 16f, 170f, 32f, 70, 22, 76, 255);
-        if (shop)
-            PT("$" + Game.Player.Money.ToString("N0"),
-                bx + bw - 30f, by + 20f, 0.36f, 255, 200, 60, 2);
-        else
-            PT(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
-                bx + bw - 30f, by + 20f, 0.36f, 255, 255, 255, 2);
+        Panel("panel_bag.png", bx, by, bw, bh);
+        PT("BAG", bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
+        PT("Check the items in your bag", bx + 76f, by + 38f, 0.3f,
+            255, 150, 215, 0);
+        Frame("pill.png", bx + bw - 190f, by + 16f, 170f, 32f,
+            3f, 0f, 66, 22, 78);
+        PT(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
+            bx + bw - 30f, by + 20f, 0.36f, 255, 255, 255, 2);
         Sidebar(bx, by);
 
-        int start = scrollRow * BCols;
-        int end = Math.Min(vis.Count, start + BCols * BRows);
+        int start = scrollRow * cols;
+        int end = Math.Min(vis.Count, start + cols * rowsShown);
         if (vis.Count == 0)
-            PT(shop ? "NOTHING TO SHOW" : "EMPTY",
-                bx + 380f, by + 220f, 0.5f, 200, 170, 195, 1);
+            PT("EMPTY", bx + 380f, by + 220f, 0.5f, 200, 170, 195, 1);
 
         for (int i = start; i < end; i++)
         {
             int id = vis[i];
-            int rr = (i - start) / BCols, cc = (i - start) % BCols;
+            int rr = (i - start) / cols, cc = (i - start) % cols;
             float tx = bx + 140f + cc * 158f;
             float ty = by + 80f + rr * 178f;
             bool on = (i == sel && focus == 1);
 
-            if (!Spr(on ? "tile_sel.png" : "tile.png",
-                tx - 8f, ty - 8f, 166f, 186f))
-            {
-                if (on) PR(tx - 3f, ty - 3f, 156f, 176f, 255, 63, 180, 255);
-                PR(tx, ty, 150f, 170f, on ? 62 : 36, on ? 24 : 22,
-                    on ? 66 : 42, 255);
-            }
+            if (on) Frame("tile_sel.png", tx, ty, 150f, 170f, 4f, 8f, 62, 24, 66);
+            else Frame("tile.png", tx, ty, 150f, 170f, 4f, 8f, 36, 22, 42);
 
-            if (!Spr("qty.png", tx + 98f, ty + 8f, 44f, 20f))
-                PR(tx + 98f, ty + 8f, 44f, 20f, 90, 28, 90, 255);
-            PT("x" + Inv.Qty[id], tx + 138f, ty + 9f, 0.3f,
-                255, 255, 255, 2);
+            Frame("qty.png", tx + 98f, ty + 8f, 44f, 20f, 3f, 0f, 100, 32, 104);
+            PT("x" + Inv.Qty[id], tx + 138f, ty + 9f, 0.3f, 255, 255, 255, 2);
 
-            if (!shop)
-            {
-                Spr("pad.png", tx + 14f, ty + 94f, 122f, 28f);
-                Icon(id, tx + 75f, ty + 64f, 100f);
-                PT(Names[id], tx + 75f, ty + 130f, 0.36f,
-                    240, 240, 245, 1);
-            }
-            else
-            {
-                Spr("pad.png", tx + 26f, ty + 64f, 98f, 24f);
-                Icon(id, tx + 75f, ty + 44f, 78f);
-                PT(Names[id], tx + 75f, ty + 92f, 0.34f,
-                    240, 240, 245, 1);
-                int price = (sellMode ? SellPrice[id] : BuyPrice[id]) * q;
-                PT("$" + price, tx + 75f, ty + 112f, 0.34f,
-                    255, 200, 60, 1);
-                if (!Spr(on ? "btn.png" : "btn_dim.png",
-                    tx + 14f, ty + 142f, 122f, 20f))
-                    PR(tx + 14f, ty + 142f, 122f, 20f, 255, 63, 180,
-                        on ? 255 : 150);
-                PT(sellMode ? "SELL" : "BUY", tx + 75f, ty + 142f, 0.3f,
-                    255, 255, 255, 1);
-            }
+            Spr("pad.png", tx + 14f, ty + 94f, 122f, 28f);
+            Icon(id, tx + 75f, ty + 64f, 100f);
+            PT(Names[id], tx + 75f, ty + 130f, 0.36f, 240, 240, 245, 1);
         }
 
         if (vis.Count > 0)
@@ -684,11 +672,75 @@ public class ItemSystem : Script
             PT(Names[id] + " - " + Desc[id],
                 bx + 140f, by + bh - 62f, 0.34f, 255, 150, 215, 0);
         }
-        PT(shop ? "T Buy/Sell   Q Qty   TAB Category   ENTER Confirm   BACKSPACE Close"
-                : "ENTER Use    TAB Category    I Close",
+        PT("ENTER Use    TAB Category    I Close",
             bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
         PT("HP " + p.Health + "   ARMOR " + p.Armor,
-            bx + bw - 20f, by + bh - 30f, 0.3f, 255, 255, 255, 2);
+            bx + bw - 100f, by + bh - 30f, 0.3f, 255, 255, 255, 2);
+    }
+
+    // ---------------- SHOP: list with buy buttons ----------------
+    void DrawShop(Ped p, int cols, int rowsShown)
+    {
+        float bx = 260f, by = 95f, bw = 760f, bh = 530f;
+        int q = QtyOptions[qtyIdx];
+        Panel("panel_shop.png", bx, by, bw, bh);
+        PT("SHOP", bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
+        PT("Buy and sell items", bx + 76f, by + 38f, 0.3f, 255, 150, 215, 0);
+        Frame("pill.png", bx + bw - 190f, by + 16f, 170f, 32f,
+            3f, 0f, 66, 22, 78);
+        PT("$" + Game.Player.Money.ToString("N0"),
+            bx + bw - 30f, by + 20f, 0.36f, 255, 200, 60, 2);
+
+        // BUY / SELL tabs + quantity
+        float ty0 = by + 78f;
+        if (!sellMode) Frame("seg_on.png", bx + 140f, ty0, 90f, 30f, 3f, 0f, 255, 90, 200);
+        else Frame("seg_off.png", bx + 140f, ty0, 90f, 30f, 3f, 0f, 44, 26, 54);
+        PT("BUY", bx + 185f, ty0 + 5f, 0.36f, 255, 255, 255, 1);
+        if (sellMode) Frame("seg_on.png", bx + 236f, ty0, 90f, 30f, 3f, 0f, 255, 90, 200);
+        else Frame("seg_off.png", bx + 236f, ty0, 90f, 30f, 3f, 0f, 44, 26, 54);
+        PT("SELL", bx + 281f, ty0 + 5f, 0.36f, 255, 255, 255, 1);
+        PT("QTY", bx + bw - 232f, ty0 + 6f, 0.32f, 255, 150, 215, 2);
+        for (int k = 0; k < QtyOptions.Length; k++)
+        {
+            float qx = bx + bw - 220f + k * 62f;
+            if (k == qtyIdx) Frame("seg_s_on.png", qx, ty0, 56f, 30f, 3f, 0f, 255, 90, 200);
+            else Frame("seg_s_off.png", qx, ty0, 56f, 30f, 3f, 0f, 44, 26, 54);
+            PT("x" + QtyOptions[k], qx + 28f, ty0 + 5f, 0.34f, 255, 255, 255, 1);
+        }
+
+        Sidebar(bx, by + 44f);
+
+        int start = scrollRow;
+        int end = Math.Min(vis.Count, start + rowsShown);
+        if (vis.Count == 0)
+            PT("NOTHING TO SHOW", bx + 440f, by + 260f, 0.5f, 200, 170, 195, 1);
+
+        for (int i = start; i < end; i++)
+        {
+            int id = vis[i];
+            float rx = bx + 140f, ry = by + 124f + (i - start) * 66f;
+            bool on = (i == sel && focus == 1);
+
+            if (on) Frame("row_sel.png", rx, ry, 600f, 60f, 4f, 8f, 62, 24, 66);
+            else Frame("row.png", rx, ry, 600f, 60f, 4f, 8f, 36, 22, 42);
+
+            Icon(id, rx + 38f, ry + 30f, 52f);
+            PT(Names[id], rx + 76f, ry + 6f, 0.4f, 255, 255, 255, 0);
+            PT(Desc[id], rx + 76f, ry + 33f, 0.26f, 190, 150, 195, 0);
+            PT("Owned x" + Inv.Qty[id], rx + 400f, ry + 20f, 0.32f,
+                255, 150, 215, 2);
+            int price = (sellMode ? SellPrice[id] : BuyPrice[id]) * q;
+            PT("$" + price, rx + 495f, ry + 17f, 0.4f, 255, 200, 60, 2);
+            if (on) Frame("btn_s.png", rx + 506f, ry + 16f, 80f, 28f, 3f, 0f, 255, 90, 200);
+            else Frame("btn_s_dim.png", rx + 506f, ry + 16f, 80f, 28f, 3f, 0f, 160, 48, 120);
+            PT(sellMode ? "SELL" : "BUY", rx + 546f, ry + 19f, 0.34f,
+                255, 255, 255, 1);
+        }
+
+        PT("T Buy/Sell   Q Qty   TAB Category   ENTER Confirm   BACKSPACE Close",
+            bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
+        PT("HP " + p.Health + "   ARMOR " + p.Armor,
+            bx + bw - 100f, by + bh - 30f, 0.3f, 255, 255, 255, 2);
     }
 
     // ---------- Main loop ----------
@@ -814,7 +866,7 @@ public class ItemSystem : Script
         bool qty = kQty || PadJustDis(203);
 
         BuildVisible();
-        int cols = BCols;
+        int cols = (mode == 2) ? 1 : BCols;
         bool enterUse = enter;
         if (focus == 0)
         {
