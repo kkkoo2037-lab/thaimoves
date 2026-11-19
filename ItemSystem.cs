@@ -549,6 +549,46 @@ public class ItemSystem : Script
         }
     }
 
+    // ---- item pictures: scripts\\PinkUI\\items\\item_0..6.png (falls back to pixel icons) ----
+    const string ICONDIR = "scripts\\PinkUI\\items\\";
+    Dictionary<int, GTA.UI.CustomSprite> iconSpr =
+        new Dictionary<int, GTA.UI.CustomSprite>();
+    bool iconsOff;
+
+    // cx, cy, size in design pixels (1280x720)
+    void Icon(int id, float cx, float cy, float size)
+    {
+        if (!iconsOff)
+        {
+            try
+            {
+                GTA.UI.CustomSprite s;
+                if (!iconSpr.TryGetValue(id, out s))
+                {
+                    string path = ICONDIR + "item_" + id + ".png";
+                    s = File.Exists(path)
+                        ? new GTA.UI.CustomSprite(path,
+                            new System.Drawing.SizeF(size, size),
+                            new System.Drawing.PointF(0f, 0f))
+                        : null;
+                    iconSpr[id] = s;
+                }
+                if (s != null)
+                {
+                    float k = GTA.UI.Screen.ScaledWidth / DW;
+                    s.Size = new System.Drawing.SizeF(size, size);
+                    s.Position = new System.Drawing.PointF(
+                        cx * k - size / 2f, cy - size / 2f);
+                    s.Draw();
+                    return;
+                }
+            }
+            catch (Exception) { iconsOff = true; }
+        }
+        DrawIcon(id, cx / DW, cy / DH, size / DH * 0.9f);
+    }
+
+    // Bag (mode 1) or Shop (mode 2), one centered panel
     void DrawUi(Ped p)
     {
         BuildVisible();
@@ -560,112 +600,82 @@ public class ItemSystem : Script
         if (selRow >= scrollRow + BRows) scrollRow = selRow - BRows + 1;
         if (scrollRow < 0) scrollRow = 0;
 
-        PR(0f, 0f, DW, DH, 0, 0, 0, 120);   // dim background
+        PR(0f, 0f, DW, DH, 0, 0, 0, 110);   // dim background
 
-        // ---------------- BAG ----------------
-        float bx = 30f, by = 30f, bw = 560f, bh = 430f;
-        List<int> bagList = new List<int>();
-        if (!shop) bagList = vis;
-        else
-        {
-            for (int id = 0; id < Names.Length; id++)
-            {
-                if (Inv.Qty[id] <= 0) continue;
-                if (catSel != 0 && Cat[id] != catSel) continue;
-                bagList.Add(id);
-            }
-        }
+        // centered panel (top-left stays free for the F1 menu)
+        float bx = 320f, by = 110f, bw = 640f, bh = 500f;
         PPanel(bx, by, bw, bh, 64f);
-        PT("BAG", bx + 20f, by + 8f, 0.6f, 255, 255, 255, 0);
-        PT("Check the items in your bag", bx + 20f, by + 40f, 0.3f,
-            255, 150, 215, 0);
-        PR(bx + bw - 180f, by + 16f, 160f, 32f, 70, 22, 76, 255);
-        PT(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
-            bx + bw - 30f, by + 20f, 0.36f, 255, 255, 255, 2);
+        PT(shop ? (sellMode ? "SELL" : "SHOP") : "BAG",
+            bx + 20f, by + 8f, 0.6f, 255, 255, 255, 0);
+        PT(shop ? ((sellMode ? "Selling" : "Buying") + "   Qty x" + q)
+                : "Check the items in your bag",
+            bx + 20f, by + 40f, 0.3f, 255, 150, 215, 0);
+        PR(bx + bw - 190f, by + 16f, 170f, 32f, 70, 22, 76, 255);
+        if (shop)
+            PT("$" + Game.Player.Money.ToString("N0"),
+                bx + bw - 30f, by + 20f, 0.36f, 255, 200, 60, 2);
+        else
+            PT(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
+                bx + bw - 30f, by + 20f, 0.36f, 255, 255, 255, 2);
         PSidebar(bx, by, catSel, focus);
 
-        int bStart = shop ? 0 : scrollRow * BCols;
-        int bEnd = Math.Min(bagList.Count, bStart + BCols * BRows);
-        if (bagList.Count == 0)
-            PT("EMPTY", bx + 340f, by + 200f, 0.5f, 200, 170, 195, 1);
-        for (int i = bStart; i < bEnd; i++)
+        int start = scrollRow * BCols;
+        int end = Math.Min(vis.Count, start + BCols * BRows);
+        if (vis.Count == 0)
+            PT(shop ? "NOTHING TO SHOW" : "EMPTY",
+                bx + 380f, by + 220f, 0.5f, 200, 170, 195, 1);
+
+        for (int i = start; i < end; i++)
         {
-            int id = bagList[i];
-            int rr = (i - bStart) / BCols, cc = (i - bStart) % BCols;
-            float tx = bx + 140f + cc * 136f, ty = by + 80f + rr * 148f;
-            if (!shop && i == sel && focus == 1)
-                PR(tx - 3f, ty - 3f, 134f, 146f, 255, 63, 180, 255);
-            PR(tx, ty, 128f, 140f, 36, 22, 42, 255);
-            DrawIcon(id, (tx + 64f) / DW, (ty + 52f) / DH, 0.095f);
-            PT("x" + Inv.Qty[id], tx + 120f, ty + 80f, 0.36f,
+            int id = vis[i];
+            int rr = (i - start) / BCols, cc = (i - start) % BCols;
+            float tx = bx + 140f + cc * 158f;
+            float ty = by + 80f + rr * 178f;
+            bool on = (i == sel && focus == 1);
+            if (on) PR(tx - 3f, ty - 3f, 156f, 176f, 255, 63, 180, 255);
+            PR(tx, ty, 150f, 170f, on ? 62 : 36, on ? 24 : 22,
+                on ? 66 : 42, 255);
+            PR(tx + 20f, ty + 118f, 110f, 2f, 255, 63, 180, 90);
+
+            // owned amount pill
+            PR(tx + 98f, ty + 8f, 44f, 20f, 90, 28, 90, 255);
+            PT("x" + Inv.Qty[id], tx + 138f, ty + 9f, 0.3f,
                 255, 255, 255, 2);
-            PT(Names[id], tx + 64f, ty + 110f, 0.34f, 240, 240, 245, 1);
-        }
-        PT(shop ? "BACKSPACE Close" : "ENTER Use    TAB Category    I Close",
-            bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
 
-        // ---------------- SHOP ----------------
-        if (shop)
-        {
-            float sx = 610f, sy = 30f, sw = 640f, sh = 430f;
-            PPanel(sx, sy, sw, sh, 64f);
-            PT(sellMode ? "SELL" : "SHOP", sx + 20f, sy + 8f, 0.6f,
-                255, 255, 255, 0);
-            PT((sellMode ? "Selling" : "Buying") + "   Qty x" + q,
-                sx + 20f, sy + 40f, 0.3f, 255, 150, 215, 0);
-            PR(sx + sw - 180f, sy + 16f, 160f, 32f, 70, 22, 76, 255);
-            PT("$" + Game.Player.Money.ToString("N0"),
-                sx + sw - 30f, sy + 20f, 0.36f, 255, 200, 60, 2);
-            PSidebar(sx, sy, catSel, focus);
-
-            int sStart = scrollRow * BCols;
-            int sEnd = Math.Min(vis.Count, sStart + BCols * BRows);
-            if (vis.Count == 0)
-                PT("NOTHING TO SHOW", sx + 380f, sy + 200f, 0.5f,
-                    200, 170, 195, 1);
-            for (int i = sStart; i < sEnd; i++)
+            if (!shop)
             {
-                int id = vis[i];
-                int rr = (i - sStart) / BCols, cc = (i - sStart) % BCols;
-                float tx = sx + 140f + cc * 160f;
-                float ty = sy + 80f + rr * 156f;
-                bool on = (i == sel && focus == 1);
-                if (on) PR(tx - 3f, ty - 3f, 158f, 154f, 255, 63, 180, 255);
-                PR(tx, ty, 152f, 148f, 36, 22, 42, 255);
-                DrawIcon(id, (tx + 76f) / DW, (ty + 38f) / DH, 0.085f);
-                PT("x" + Inv.Qty[id], tx + 146f, ty + 4f, 0.3f,
-                    255, 123, 208, 2);
-                PT(Names[id], tx + 76f, ty + 76f, 0.34f, 240, 240, 245, 1);
+                Icon(id, tx + 75f, ty + 70f, 104f);
+                PT(Names[id], tx + 75f, ty + 130f, 0.36f,
+                    240, 240, 245, 1);
+            }
+            else
+            {
+                Icon(id, tx + 75f, ty + 52f, 82f);
+                PT(Names[id], tx + 75f, ty + 94f, 0.34f,
+                    240, 240, 245, 1);
                 int price = (sellMode ? SellPrice[id] : BuyPrice[id]) * q;
-                PT("$" + price, tx + 76f, ty + 98f, 0.34f, 255, 200, 60, 1);
-                PR(tx + 12f, ty + 122f, 128f, 20f, 255, 63, 180,
-                    on ? 255 : 160);
-                PT(sellMode ? "SELL" : "BUY", tx + 76f, ty + 122f, 0.3f,
+                PT("$" + price, tx + 75f, ty + 114f, 0.34f,
+                    255, 200, 60, 1);
+                PR(tx + 14f, ty + 142f, 122f, 20f, 255, 63, 180,
+                    on ? 255 : 150);
+                PT(sellMode ? "SELL" : "BUY", tx + 75f, ty + 142f, 0.3f,
                     255, 255, 255, 1);
             }
-            PT("T Buy/Sell   Q Qty   TAB Category   ENTER Confirm",
-                sx + 20f, sy + sh - 30f, 0.3f, 200, 200, 205, 0);
         }
 
-        // ---------------- CATALOG ----------------
-        float cx = 30f, cy = 475f, cw = 1220f, ch = 225f;
-        PPanel(cx, cy, cw, ch, 48f);
-        PT("ALL ITEMS", cx + 20f, cy + 6f, 0.5f, 255, 255, 255, 0);
-        PT("HP " + p.Health + "    ARMOR " + p.Armor,
-            cx + cw - 20f, cy + 12f, 0.36f, 255, 255, 255, 2);
-        int curId = vis.Count > 0 ? vis[sel] : -1;
-        for (int id = 0; id < Names.Length; id++)
+        // description of the selected item
+        if (vis.Count > 0)
         {
-            float ix = cx + 10f + id * 172f, iy = cy + 58f;
-            if (id == curId)
-                PR(ix - 2f, iy - 2f, 168f, 124f, 255, 63, 180, 255);
-            PR(ix, iy, 164f, 120f, 36, 22, 42, 255);
-            DrawIcon(id, (ix + 82f) / DW, (iy + 44f) / DH, 0.09f);
-            PT(Names[id], ix + 82f, iy + 86f, 0.34f, 240, 240, 245, 1);
+            int id = vis[sel];
+            PT(Names[id] + " - " + Desc[id],
+                bx + 140f, by + bh - 62f, 0.34f, 255, 150, 215, 0);
         }
-        if (curId >= 0)
-            PT(Names[curId] + " - " + Desc[curId],
-                cx + 20f, cy + 190f, 0.34f, 255, 150, 215, 0);
+
+        PT(shop ? "T Buy/Sell   Q Qty   TAB Category   ENTER Confirm   BACKSPACE Close"
+                : "ENTER Use    TAB Category    I Close",
+            bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
+        PT("HP " + p.Health + "   ARMOR " + p.Armor,
+            bx + bw - 20f, by + bh - 30f, 0.3f, 255, 255, 255, 2);
     }
 
     // ---------- Main loop ----------
