@@ -350,14 +350,17 @@ public class CarryRevive : Script
 
         float w = 0.30f;
         float cy = BarY;
-        Rect(BarX, cy, w + 0.006f, 0.034f, 0, 0, 0, 190);
+        Rect(BarX, cy, w + 0.012f, 0.044f, 50, 230, 70, 255);   // green border
+        Rect(BarX, cy, w + 0.006f, 0.034f, 7, 20, 11, 245);
         float fw = w * frac;
         Rect(BarX - w / 2f + fw / 2f, cy, fw, 0.024f,
-            225, 100, 130, 255);
+            50, 230, 70, 255);
+        Rect(BarX - w / 2f + fw / 2f, cy - 0.006f, fw, 0.008f,
+            150, 255, 165, 255);   // shine
         DrawText("REVIVING  " + left + "s", BarX, cy - 0.048f, 0.45f,
             255, 255, 255, 255, true);
-        DrawText("Backspace = cancel", BarX, cy + 0.025f, 0.28f,
-            200, 200, 205, 255, true);
+        DrawText("Backspace = cancel", BarX, cy + 0.028f, 0.28f,
+            160, 255, 175, 255, true);
     }
 
     // ---------- Carry menu (F1) ----------
@@ -381,10 +384,14 @@ public class CarryRevive : Script
     {
         int n = rows.Count;
         float h = 0.12f + n * 0.045f;
+        Rect(MenuX, MenuTop + h / 2f - 0.02f, 0.306f, h + 0.008f,
+            50, 230, 70, 255);   // green border
         Rect(MenuX, MenuTop + h / 2f - 0.02f, 0.30f, h,
-            18, 18, 22, 235);
+            7, 20, 11, 240);
+        Rect(MenuX, MenuTop + 0.045f, 0.30f, 0.003f,
+            50, 230, 70, 255);
         DrawText("CARRY", MenuX, MenuTop, 0.5f,
-            255, 255, 255, 255, true);
+            90, 255, 110, 255, true);
 
         for (int i = 0; i < n; i++)
         {
@@ -392,13 +399,13 @@ public class CarryRevive : Script
             bool on = (i == sel);
             if (on)
                 Rect(MenuX, y + 0.014f, 0.28f, 0.038f,
-                    225, 100, 130, 255);
+                    30, 150, 50, 255);
             DrawText(rows[i], MenuX, y, 0.36f,
                 255, 255, 255, 255, true);
         }
         DrawText("Up/Down move   Enter select   Back close",
             MenuX, MenuTop + 0.075f + n * 0.045f, 0.24f,
-            200, 200, 205, 255, true);
+            160, 255, 175, 255, true);
     }
 
     // ---------- Main loop ----------
