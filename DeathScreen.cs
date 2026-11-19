@@ -4,6 +4,8 @@ using GTA;
 using GTA.Math;
 using GTA.Native;
 
+// The player never really dies: at low health he goes "down"
+// (ragdoll on the ground, invincible) and a timer starts.
 public class DeathScreen : Script
 {
     // ===== Settings =====
@@ -11,25 +13,24 @@ public class DeathScreen : Script
     const int RESPAWN_SECONDS = 1800;
     const int UID = 256;
 
+    // you go down when your health falls to this % of the bar
+    const float DOWN_AT_PERCENT = 0.25f;
+
     // respawn point (Central Los Santos Medical Center)
     static readonly Vector3 Hospital = new Vector3(341.0f, -1397.3f, 32.5f);
     const float HospitalHeading = 48.5f;
 
     int ReviveKey = 0x52;     // R = use a Revive Kit on yourself
-    int PadRevive = 204;      // Y on the pad
-
-    // after being revived with a kit: health you get back
-    const int REVIVE_HEALTH = 120;
+    int PadRevive = 201;      // A on the pad
     // ====================
 
     [DllImport("user32.dll")]
     static extern short GetAsyncKeyState(int vk);
 
     bool[] prev = new bool[256];
-    bool dead;
-    bool respawning;
-    int deadStart;
-    int nextFx;
+    bool downed;
+    bool busy;                // fade / respawn in progress
+    int downStart;
 
     public DeathScreen()
     {
@@ -109,9 +110,9 @@ public class DeathScreen : Script
             Hash.END_TEXT_COMMAND_DISPLAY_TEXT, cx, y, 0);
     }
 
-    // three coloured parts on one centered line
-    static void Line3(string a, string b, string c, float cy, float y,
-        int font, float scale)
+    // up to three parts on one centered line (middle part is green)
+    static void Line3(string a, string b, string c, float centerX,
+        float y, int font, float scale)
     {
         float gap = 0.006f;
         float wa = a == "" ? 0f : Measure(a, font, scale);
@@ -120,7 +121,7 @@ public class DeathScreen : Script
         float total = wa + wb + wc;
         if (a != "") total += gap;
         if (c != "") total += gap;
-        float x = cy - total / 2f;
+        float x = centerX - total / 2f;
         if (a != "")
         {
             Seg(a, x, y, font, scale, 255, 255, 255, 255);
@@ -135,56 +136,66 @@ public class DeathScreen : Script
         }
     }
 
-    // ---------- Death state ----------
-    void HoldDeath(int now)
+    static int HoldHealth(Ped p)
     {
-        // keep the game from restarting / fading out by itself
-        Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, true);
-        Function.Call(Hash.IGNORE_NEXT_RESTART, true);
-        Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
-
-        if (now >= nextFx)
-        {
-            nextFx = now + 400;
-            Function.Call(Hash.ANIMPOSTFX_STOP_ALL);
-        }
+        return (int)(100 + (p.MaxHealth - 100) * 0.30f);
     }
 
-    void ClearDeathState()
+    // ---------- Down / up ----------
+    void Protect(Ped p, bool on)
     {
-        Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, false);
-        Function.Call(Hash.IGNORE_NEXT_RESTART, false);
-        Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, true);
-        Function.Call(Hash.ANIMPOSTFX_STOP_ALL);
-        Function.Call(Hash.CLEAR_TIMECYCLE_MODIFIER);
+        int pl = Game.Player.Handle;
+        Function.Call(Hash.SET_ENTITY_INVINCIBLE, p, on);
+        Function.Call(Hash.SET_PLAYER_INVINCIBLE, pl, on);
+        Function.Call(Hash.SET_EVERYONE_IGNORE_PLAYER, pl, on);
+        Function.Call(Hash.SET_POLICE_IGNORE_PLAYER, pl, on);
     }
 
-    void BringBack(Ped p, int health)
+    void GoDown(Ped p, int now)
     {
-        Function.Call(Hash.RESURRECT_PED, p);
-        p.Task.ClearAllImmediately();
-        p.Health = Math.Min(p.MaxHealth, health);
-        ClearDeathState();
+        downed = true;
+        downStart = now;
+
+        // a real death slipped through: undo it
         if (p.IsDead)
         {
-            // fallback if the ped is still marked dead
-            Vector3 pos = p.Position;
-            Function.Call(Hash.NETWORK_RESURRECT_LOCAL_PLAYER,
-                pos.X, pos.Y, pos.Z, p.Heading, false, false);
-            p.Health = Math.Min(p.MaxHealth, health);
+            Function.Call(Hash.RESURRECT_PED, p);
+            p.Task.ClearAllImmediately();
+            Function.Call(Hash.ANIMPOSTFX_STOP_ALL);
+            Function.Call(Hash.CLEAR_TIMECYCLE_MODIFIER);
+            Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, false);
+            if (Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT))
+                Function.Call(Hash.DO_SCREEN_FADE_IN, 300);
         }
+
+        Protect(p, true);
+        p.Health = HoldHealth(p);
+
+        if (p.IsInVehicle())
+            Function.Call(Hash.TASK_LEAVE_VEHICLE, p, p.CurrentVehicle, 16);
+    }
+
+    void GetUp(Ped p, int health)
+    {
+        downed = false;
+        Protect(p, false);
+        Function.Call(Hash.ANIMPOSTFX_STOP_ALL);
+        Function.Call(Hash.CLEAR_TIMECYCLE_MODIFIER);
+        p.Health = Math.Min(p.MaxHealth, health);
+        // short ragdoll, then the character stands up by himself
+        Function.Call(Hash.SET_PED_TO_RAGDOLL, p, 1200, 1200,
+            0, false, false, false);
     }
 
     void ReviveInPlace(Ped p)
     {
-        BringBack(p, REVIVE_HEALTH);
-        dead = false;
+        GetUp(p, 100 + (p.MaxHealth - 100) / 2);
         Msg("You were revived");
     }
 
     void RespawnAtHospital(Ped p)
     {
-        respawning = true;
+        busy = true;
 
         Function.Call(Hash.DO_SCREEN_FADE_OUT, 700);
         int t = Game.GameTime + 1500;
@@ -192,7 +203,8 @@ public class DeathScreen : Script
             && Game.GameTime < t)
             Script.Yield();
 
-        BringBack(p, p.MaxHealth);
+        GetUp(p, p.MaxHealth);
+        p.Task.ClearAllImmediately();
         p.Position = Hospital;
         p.Heading = HospitalHeading;
         Function.Call(Hash.CLEAR_AREA_OF_PEDS,
@@ -201,8 +213,7 @@ public class DeathScreen : Script
         Script.Wait(400);
         Function.Call(Hash.DO_SCREEN_FADE_IN, 900);
 
-        dead = false;
-        respawning = false;
+        busy = false;
         Msg("You were treated at the hospital");
     }
 
@@ -285,35 +296,36 @@ public class DeathScreen : Script
         bool kRevive = Pressed(ReviveKey);
 
         if (p == null || !p.Exists()) return;
-        if (respawning) return;
+        if (busy) return;
 
         int now = Game.GameTime;
 
-        if (!p.IsDead)
+        // ----- not down yet: watch the health -----
+        if (!downed)
         {
-            if (dead)
-            {
-                dead = false;
-                ClearDeathState();
-            }
-            return;
+            float limit = 100 + (p.MaxHealth - 100) * DOWN_AT_PERCENT;
+            if (p.IsDead || p.Health <= limit)
+                GoDown(p, now);
+            else
+                return;
         }
 
-        if (!dead)
-        {
-            dead = true;
-            deadStart = now;
-            nextFx = 0;
-        }
-
-        HoldDeath(now);
-
-        int remain = RESPAWN_SECONDS * 1000 - (now - deadStart);
+        // ----- down -----
+        int remain = RESPAWN_SECONDS * 1000 - (now - downStart);
         if (remain <= 0)
         {
             RespawnAtHospital(p);
             return;
         }
+
+        // lie on the ground, can not move or attack
+        Protect(p, true);
+        p.Health = HoldHealth(p);
+        Function.Call(Hash.SET_PED_TO_RAGDOLL, p, 2000, 2000,
+            0, false, false, false);
+        Function.Call(Hash.DISABLE_ALL_CONTROL_ACTIONS, 0);
+        Function.Call(Hash.ENABLE_CONTROL_ACTION, 0, 1, true);
+        Function.Call(Hash.ENABLE_CONTROL_ACTION, 0, 2, true);
 
         // use a Revive Kit on yourself
         if (kRevive || PadJustDis(PadRevive))
