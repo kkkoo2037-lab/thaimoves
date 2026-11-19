@@ -624,7 +624,7 @@ public class ItemSystem : Script
     const int BRows = 2;
     // If the UI looks too big/small, try Screen.Height instead of
     // Screen.ScaledHeight (and Width the same way) on the two lines below.
-    static float UiH { get { return GTA.UI.Screen.ScaledHeight; } }
+    static float UiH { get { return 720f; } }
     static float UiW { get { return GTA.UI.Screen.ScaledWidth; } }
 
     Dictionary<string, GTA.UI.CustomSprite> spr =
