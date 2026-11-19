@@ -70,6 +70,15 @@ public class ItemSystem : Script
     static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60, 1000 };
     static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20, 300 };
     static readonly int[] QtyOptions = { 1, 5, 10 };
+    static readonly float[] Weight = { 0.5f, 3.0f, 1.5f, 0.5f, 0.4f, 0.4f, 1.0f };
+    const float MaxWeight = 50f;
+
+    static float TotalWeight()
+    {
+        float w = 0f;
+        for (int i = 0; i < Weight.Length; i++) w += Weight[i] * Inv.Qty[i];
+        return w;
+    }
 
     // Pixel icons 10x10 ('.' = empty)
     static readonly string[][] Icons = {
@@ -398,6 +407,11 @@ public class ItemSystem : Script
                 Msg("Not enough money");
                 return;
             }
+            if (TotalWeight() + Weight[id] * q > MaxWeight)
+            {
+                Msg("Bag is full (too heavy)");
+                return;
+            }
             pl.Money = pl.Money - total;
             Inv.Qty[id] += q;
             Inv.Dirty = true;
@@ -472,7 +486,7 @@ public class ItemSystem : Script
         }
     }
 
-    void DrawUi(Ped p)
+    void DrawUiOld(Ped p)
     {
         // panel
         float pcx = 0.5f, pcy = 0.5f, pw = 0.64f, ph = 0.64f;
@@ -599,11 +613,223 @@ public class ItemSystem : Script
             200, 200, 205, 255, true);
     }
 
+
+    // =====================================================================
+    //  PinkUI - sprite based UI (PNG files in scripts\PinkUI\)
+    //  Needs a ScriptHookVDotNet build that has GTA.UI.CustomSprite.
+    // =====================================================================
+    const string UIDIR = "scripts\\PinkUI\\";
+    const float TEX_DIV = 2f;        // the PNGs were rendered at 2x
+    const int BCols = 3;
+    const int BRows = 2;
+    // If the UI looks too big/small, try Screen.Height instead of
+    // Screen.ScaledHeight (and Width the same way) on the two lines below.
+    static float UiH { get { return GTA.UI.Screen.ScaledHeight; } }
+    static float UiW { get { return GTA.UI.Screen.ScaledWidth; } }
+
+    Dictionary<string, GTA.UI.CustomSprite> spr =
+        new Dictionary<string, GTA.UI.CustomSprite>();
+    Dictionary<string, System.Drawing.SizeF> sdim =
+        new Dictionary<string, System.Drawing.SizeF>();
+    float uS, uX, uW;      // scale, left offset, width (screen units)
+
+    float NX(float x) { return (uX + x * uS) / uW; }
+    float NY(float y) { return y / 941f; }
+
+    System.Drawing.SizeF Spr(string name, float x, float y)
+    {
+        GTA.UI.CustomSprite s;
+        System.Drawing.SizeF d;
+        if (!spr.TryGetValue(name, out s))
+        {
+            string path = UIDIR + name;
+            s = null;
+            d = new System.Drawing.SizeF(0f, 0f);
+            if (File.Exists(path))
+            {
+                using (System.Drawing.Image im =
+                    System.Drawing.Image.FromFile(path))
+                {
+                    d = new System.Drawing.SizeF(
+                        im.Width / TEX_DIV, im.Height / TEX_DIV);
+                }
+                s = new GTA.UI.CustomSprite(path,
+                    new System.Drawing.SizeF(d.Width, d.Height),
+                    new System.Drawing.PointF(0f, 0f));
+            }
+            spr[name] = s;
+            sdim[name] = d;
+        }
+        d = sdim[name];
+        if (s == null) return d;
+        s.Position = new System.Drawing.PointF(uX + x * uS, y * uS);
+        s.Size = new System.Drawing.SizeF(d.Width * uS, d.Height * uS);
+        s.Draw();
+        return d;
+    }
+
+    System.Drawing.SizeF Dim(string name)
+    {
+        System.Drawing.SizeF d;
+        if (!sdim.TryGetValue(name, out d))
+        {
+            Spr(name, 0f, -2000f);   // loads it (drawn off-screen once)
+            sdim.TryGetValue(name, out d);
+        }
+        return d;
+    }
+
+    void RectD(float x, float y, float w, float h,
+        int r, int g, int b, int a)
+    {
+        Rect(NX(x + w / 2f), NY(y + h / 2f), w * uS / uW, h / 941f,
+            r, g, b, a);
+    }
+
+    void Txt(string s, float x, float y, float scale,
+        int r, int g, int b, bool right)
+    {
+        Function.Call(Hash.SET_TEXT_FONT, 4);
+        Function.Call(Hash.SET_TEXT_SCALE, 0f, scale);
+        Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, 255);
+        Function.Call(Hash.SET_TEXT_DROP_SHADOW);
+        float nx = NX(x);
+        if (right)
+        {
+            Function.Call(Hash.SET_TEXT_JUSTIFICATION, 2);
+            Function.Call(Hash.SET_TEXT_WRAP, 0f, nx);
+            nx = 0f;
+        }
+        Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+        Function.Call(
+            Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, s);
+        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, nx, NY(y), 0);
+    }
+
+    // grid geometry (design pixels, same numbers as the HTML layout)
+    const float BagGx = 279f, BagGy = 150f, BagSx = 176.7f, BagSy = 174f;
+    const float ShpGx = 1109f, ShpGy = 199f, ShpSx = 175.7f, ShpSy = 202f;
+
+    void DrawUi(Ped p)
+    {
+        if (!Directory.Exists(UIDIR))
+        {
+            DrawUiOld(p);
+            return;
+        }
+        uS = UiH / 941f;
+        uW = UiW;
+        uX = (uW - 1672f * uS) / 2f;
+
+        BuildVisible();
+        bool shop = (mode == 2);
+
+        // scroll so the selected row is visible
+        int selRow = sel / BCols;
+        if (selRow < scrollRow) scrollRow = selRow;
+        if (selRow >= scrollRow + BRows) scrollRow = selRow - BRows + 1;
+        if (scrollRow < 0) scrollRow = 0;
+
+        // ---- bag panel (always) ----
+        List<int> bagList = new List<int>();
+        if (!shop) bagList = vis;
+        else
+        {
+            for (int id = 0; id < Names.Length; id++)
+            {
+                if (Inv.Qty[id] <= 0) continue;
+                if (catSel != 0 && Cat[id] != catSel) continue;
+                bagList.Add(id);
+            }
+        }
+        Spr("panel_bag.png", 33f, 42f);
+        Spr("cat_on_" + catSel + ".png", 47f, 150f + 62f * catSel);
+        Txt(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
+            582f, 76f, 0.42f, 255, 255, 255, false);
+
+        int bStart = shop ? 0 : scrollRow * BCols;
+        int bEnd = Math.Min(bagList.Count, bStart + BCols * BRows);
+        if (bagList.Count == 0)
+            Txt("EMPTY", 540f, 300f, 0.6f, 200, 170, 195, false);
+        for (int i = bStart; i < bEnd; i++)
+        {
+            int id = bagList[i];
+            int rr = (i - bStart) / BCols, cc = (i - bStart) % BCols;
+            float tx = BagGx + cc * BagSx, ty = BagGy + rr * BagSy;
+            if (!shop && i == sel && focus == 1)
+                RectD(tx - 3f, ty - 3f, 164.7f + 6f, 162f + 6f,
+                    255, 63, 180, 255);
+            Spr("tile_bag_" + id + ".png", tx, ty);
+            Txt("x" + Inv.Qty[id], tx + 151f, ty + 98f, 0.45f,
+                255, 255, 255, true);
+        }
+
+        // ---- shop panel ----
+        if (shop)
+        {
+            Spr("panel_shop.png", 863f, 42f);
+            Spr("cat_on_" + catSel + ".png", 877f, 150f + 62f * catSel);
+            Spr(sellMode ? "seg_mode_sell.png" : "seg_mode_buy.png",
+                1109f, 146f);
+            Spr("seg_qty_" + QtyOptions[qtyIdx] + ".png", 1444.8f, 146f);
+            Txt(Game.Player.Money.ToString("N0"), 1537f, 76f, 0.42f,
+                255, 200, 60, true);
+
+            string m = sellMode ? "sell" : "buy";
+            int sStart = scrollRow * BCols;
+            int sEnd = Math.Min(vis.Count, sStart + BCols * BRows);
+            if (vis.Count == 0)
+                Txt("NOTHING TO SELL", 1250f, 330f, 0.6f,
+                    200, 170, 195, false);
+            for (int i = sStart; i < sEnd; i++)
+            {
+                int id = vis[i];
+                int rr = (i - sStart) / BCols, cc = (i - sStart) % BCols;
+                float tx = ShpGx + cc * ShpSx, ty = ShpGy + rr * ShpSy;
+                if (i == sel && focus == 1)
+                    RectD(tx - 3f, ty - 3f, 163.7f + 6f, 190f + 6f,
+                        255, 63, 180, 255);
+                Spr("tile_shop_" + m + "_" + id + ".png", tx, ty);
+                Txt("x" + Inv.Qty[id], tx + 151f, ty + 8f, 0.38f,
+                    255, 123, 208, true);
+                System.Drawing.SizeF pd = Dim("price_" + m + "_" + id + "_"
+                    + QtyOptions[qtyIdx] + ".png");
+                Spr("price_" + m + "_" + id + "_" + QtyOptions[qtyIdx]
+                    + ".png", tx + (163.7f - pd.Width) / 2f, ty + 124f);
+            }
+            Txt("T Buy/Sell    Q Quantity    Tab Category    "
+                + "Enter Confirm    Backspace Close",
+                836f, 910f, 0.34f, 255, 255, 255, false);
+        }
+
+        // ---- description of the selected item (bag footer) ----
+        if (vis.Count > 0 && focus == 1 && !shop)
+        {
+            System.Drawing.SizeF dd = Dim("desc_" + vis[sel] + ".png");
+            Spr("desc_" + vis[sel] + ".png", 789f - dd.Width, 534f);
+        }
+
+        // ---- catalog (always) ----
+        Spr("catalog.png", 33f, 610f);
+
+        // HP / armor
+        Txt("HP " + p.Health + "    ARMOR " + p.Armor,
+            60f, 912f, 0.34f, 255, 255, 255, false);
+    }
+
     // ---------- Main loop ----------
     void OnTick(object sender, EventArgs e)
     {
         try { Tick2(); }
-        catch (Exception) { }
+        catch (Exception ex)
+        {
+            try
+            {
+                File.AppendAllText("ItemSystem.log",
+                    DateTime.Now + "  " + ex + "\r\n");
+            }
+            catch (Exception) { }
+        }
     }
 
     void OpenMenu(int m)
@@ -714,7 +940,7 @@ public class ItemSystem : Script
         bool qty = kQty || PadJustDis(203);
 
         BuildVisible();
-        int cols = 6;
+        int cols = BCols;
         bool enterUse = enter;
         if (focus == 0)
         {
