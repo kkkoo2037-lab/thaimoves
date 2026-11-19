@@ -486,215 +486,32 @@ public class ItemSystem : Script
         }
     }
 
-    void DrawUiOld(Ped p)
-    {
-        // panel
-        float pcx = 0.5f, pcy = 0.5f, pw = 0.64f, ph = 0.64f;
-        Rect(pcx, pcy, pw, ph, 18, 18, 22, 235);
-        // sidebar
-        Rect(0.245f, pcy, 0.13f, ph, 26, 26, 31, 245);
-
-        string title = mode == 1 ? "INVENTORY" : "SHOP";
-        DrawText(title, 0.195f, 0.20f, 0.45f,
-            230, 230, 235, 255, false);
-        if (mode == 2)
-        {
-            string ms = sellMode ? "SELL" : "BUY";
-            DrawText(ms, 0.195f, 0.235f, 0.38f,
-                230, 100, 130, 255, false);
-        }
-
-        // categories
-        for (int i = 0; i < CatNames.Length; i++)
-        {
-            float cy = 0.30f + i * 0.05f;
-            bool on = (i == catSel);
-            if (on && focus == 0)
-                Rect(0.245f, cy + 0.012f, 0.12f, 0.040f,
-                    225, 100, 130, 255);
-            else if (on)
-                Rect(0.245f, cy + 0.012f, 0.12f, 0.040f,
-                    120, 50, 70, 200);
-            DrawText(CatNames[i], 0.200f, cy, 0.36f,
-                on ? 255 : 190, on ? 255 : 190, on ? 255 : 195,
-                255, false);
-        }
-
-        BuildVisible();
-
-        // grid
-        float x0 = 0.335f, y0 = 0.215f;
-        float tw = 0.068f, th = 0.125f;
-        float gx = 0.075f, gy = 0.135f;
-        int cols = 6;
-        int rowsShown = 3;
-
-        int selRow = sel / cols;
-        if (selRow < scrollRow) scrollRow = selRow;
-        if (selRow >= scrollRow + rowsShown)
-            scrollRow = selRow - rowsShown + 1;
-        if (scrollRow < 0) scrollRow = 0;
-
-        if (vis.Count == 0)
-        {
-            string empty = mode == 1
-                ? "Your bag is empty"
-                : "Nothing to show";
-            DrawText(empty, 0.57f, 0.38f, 0.45f,
-                170, 170, 175, 255, true);
-        }
-
-        int start = scrollRow * cols;
-        int end = Math.Min(vis.Count, start + cols * rowsShown);
-        for (int i = start; i < end; i++)
-        {
-            int id = vis[i];
-            int rr = (i - start) / cols;
-            int cc = (i - start) % cols;
-            float tx = x0 + cc * gx;
-            float ty = y0 + rr * gy;
-            float tcx = tx + tw / 2f;
-            float tcy = ty + th / 2f;
-
-            if (i == sel && focus == 1)
-                Rect(tcx, tcy, tw + 0.004f, th + 0.007f,
-                    225, 100, 130, 255);
-            Rect(tcx, tcy, tw, th, 36, 36, 42, 255);
-
-            string top;
-            if (mode == 1) top = "x" + Inv.Qty[id];
-            else if (sellMode) top = "$" + SellPrice[id];
-            else top = "$" + BuyPrice[id];
-            DrawText(top, tx + 0.005f, ty + 0.004f, 0.30f,
-                255, 255, 255, 255, false);
-
-            DrawIcon(id, tcx, ty + 0.058f, 0.060f);
-
-            DrawText(Names[id], tcx, ty + th - 0.032f, 0.28f,
-                235, 235, 240, 255, true);
-        }
-
-        // detail strip
-        Rect(0.57f, 0.717f, 0.49f, 0.085f, 28, 28, 34, 255);
-        if (vis.Count > 0)
-        {
-            int id = vis[sel];
-            int q = QtyOptions[qtyIdx];
-            DrawText(Names[id] + " - " + Desc[id],
-                0.335f, 0.680f, 0.34f, 255, 255, 255, 255, false);
-            string line;
-            if (mode == 1)
-                line = "Owned: " + Inv.Qty[id] + "     Enter = use";
-            else if (sellMode)
-                line = "Sell x" + q + " = $" + (SellPrice[id] * q)
-                    + "     Owned: " + Inv.Qty[id]
-                    + "     Enter = sell";
-            else
-                line = "Buy x" + q + " = $" + (BuyPrice[id] * q)
-                    + "     Owned: " + Inv.Qty[id]
-                    + "     Enter = buy";
-            DrawText(line, 0.335f, 0.710f, 0.32f,
-                230, 100, 130, 255, false);
-        }
-
-        // stats bar
-        string stats = "$" + Game.Player.Money
-            + "      HP " + p.Health
-            + "      ARMOR " + p.Armor;
-        DrawText(stats, 0.335f, 0.762f, 0.34f,
-            255, 255, 255, 255, false);
-
-        // hints
-        string hint = mode == 1
-            ? "Arrows move   Left = categories   Enter use"
-            : "Arrows move   Left = categories   T buy/sell   "
-                + "Q qty   Enter confirm";
-        DrawText(hint, 0.5f, 0.833f, 0.30f,
-            200, 200, 205, 255, true);
-    }
-
-
     // =====================================================================
-    //  PinkUI - sprite based UI (PNG files in scripts\PinkUI\)
-    //  Needs a ScriptHookVDotNet build that has GTA.UI.CustomSprite.
+    //  PinkUI - drawn with native rects/text (NO PNG files needed)
+    //  Design space 1280x720. Replaces DrawUiOld + the old sprite UI.
     // =====================================================================
-    const string UIDIR = "scripts\\PinkUI\\";
-    const float TEX_DIV = 2f;        // the PNGs were rendered at 2x
     const int BCols = 3;
     const int BRows = 2;
-    // If the UI looks too big/small, try Screen.Height instead of
-    // Screen.ScaledHeight (and Width the same way) on the two lines below.
-    static float UiH { get { return 720f; } }
-    static float UiW { get { return GTA.UI.Screen.ScaledWidth; } }
+    const float DW = 1280f, DH = 720f;
 
-    Dictionary<string, GTA.UI.CustomSprite> spr =
-        new Dictionary<string, GTA.UI.CustomSprite>();
-    Dictionary<string, System.Drawing.SizeF> sdim =
-        new Dictionary<string, System.Drawing.SizeF>();
-    float uS, uX, uW;      // scale, left offset, width (screen units)
-
-    float NX(float x) { return (uX + x * uS) / uW; }
-    float NY(float y) { return y / 941f; }
-
-    System.Drawing.SizeF Spr(string name, float x, float y)
-    {
-        GTA.UI.CustomSprite s;
-        System.Drawing.SizeF d;
-        if (!spr.TryGetValue(name, out s))
-        {
-            string path = UIDIR + name;
-            s = null;
-            d = new System.Drawing.SizeF(0f, 0f);
-            if (File.Exists(path))
-            {
-                using (System.Drawing.Image im =
-                    System.Drawing.Image.FromFile(path))
-                {
-                    d = new System.Drawing.SizeF(
-                        im.Width / TEX_DIV, im.Height / TEX_DIV);
-                }
-                s = new GTA.UI.CustomSprite(path,
-                    new System.Drawing.SizeF(d.Width, d.Height),
-                    new System.Drawing.PointF(0f, 0f));
-            }
-            spr[name] = s;
-            sdim[name] = d;
-        }
-        d = sdim[name];
-        if (s == null) return d;
-        s.Position = new System.Drawing.PointF(uX + x * uS, y * uS);
-        s.Size = new System.Drawing.SizeF(d.Width * uS, d.Height * uS);
-        s.Draw();
-        return d;
-    }
-
-    System.Drawing.SizeF Dim(string name)
-    {
-        System.Drawing.SizeF d;
-        if (!sdim.TryGetValue(name, out d))
-        {
-            Spr(name, 0f, -2000f);   // loads it (drawn off-screen once)
-            sdim.TryGetValue(name, out d);
-        }
-        return d;
-    }
-
-    void RectD(float x, float y, float w, float h,
+    static void PR(float x, float y, float w, float h,
         int r, int g, int b, int a)
     {
-        Rect(NX(x + w / 2f), NY(y + h / 2f), w * uS / uW, h / 941f,
+        Rect((x + w / 2f) / DW, (y + h / 2f) / DH, w / DW, h / DH,
             r, g, b, a);
     }
 
-    void Txt(string s, float x, float y, float scale,
-        int r, int g, int b, bool right)
+    // align: 0 left, 1 center, 2 right
+    static void PT(string s, float x, float y, float scale,
+        int r, int g, int b, int align)
     {
         Function.Call(Hash.SET_TEXT_FONT, 4);
         Function.Call(Hash.SET_TEXT_SCALE, 0f, scale);
         Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, 255);
         Function.Call(Hash.SET_TEXT_DROP_SHADOW);
-        float nx = NX(x);
-        if (right)
+        float nx = x / DW;
+        if (align == 1) Function.Call(Hash.SET_TEXT_CENTRE, true);
+        else if (align == 2)
         {
             Function.Call(Hash.SET_TEXT_JUSTIFICATION, 2);
             Function.Call(Hash.SET_TEXT_WRAP, 0f, nx);
@@ -703,34 +520,50 @@ public class ItemSystem : Script
         Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
         Function.Call(
             Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, s);
-        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, nx, NY(y), 0);
+        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT,
+            nx, y / DH, 0);
     }
 
-    // grid geometry (design pixels, same numbers as the HTML layout)
-    const float BagGx = 279f, BagGy = 150f, BagSx = 176.7f, BagSy = 174f;
-    const float ShpGx = 1109f, ShpGy = 199f, ShpSx = 175.7f, ShpSy = 202f;
+    static void PPanel(float x, float y, float w, float h, float hh)
+    {
+        PR(x - 3f, y - 3f, w + 6f, h + 6f, 255, 63, 180, 70);   // glow
+        PR(x - 1f, y - 1f, w + 2f, h + 2f, 255, 63, 180, 230);  // border
+        PR(x, y, w, h, 20, 10, 24, 240);                         // body
+        PR(x, y, w, hh, 44, 14, 48, 255);                        // header
+        PR(x, y + hh, w, 2f, 255, 63, 180, 255);                 // line
+        // pink slanted-look stripes (bottom right)
+        PR(x + w - 70f, y + h - 6f, 50f, 3f, 255, 63, 180, 200);
+        PR(x + w - 40f, y + h - 12f, 30f, 3f, 255, 63, 180, 120);
+    }
+
+    static void PSidebar(float x, float y, int catSel, int focus)
+    {
+        for (int i = 0; i < CatNames.Length; i++)
+        {
+            float sy = y + 80f + i * 44f;
+            bool on = (i == catSel);
+            if (on && focus == 0) PR(x + 10f, sy, 116f, 38f, 255, 63, 180, 240);
+            else if (on) PR(x + 10f, sy, 116f, 38f, 150, 40, 110, 230);
+            else PR(x + 10f, sy, 116f, 38f, 38, 22, 44, 220);
+            PT(CatNames[i], x + 24f, sy + 8f, 0.34f, 255, 255, 255, 0);
+        }
+    }
 
     void DrawUi(Ped p)
     {
-        if (!Directory.Exists(UIDIR))
-        {
-            DrawUiOld(p);
-            return;
-        }
-        uS = UiH / 941f;
-        uW = UiW;
-        uX = (uW - 1672f * uS) / 2f;
-
         BuildVisible();
         bool shop = (mode == 2);
+        int q = QtyOptions[qtyIdx];
 
-        // scroll so the selected row is visible
         int selRow = sel / BCols;
         if (selRow < scrollRow) scrollRow = selRow;
         if (selRow >= scrollRow + BRows) scrollRow = selRow - BRows + 1;
         if (scrollRow < 0) scrollRow = 0;
 
-        // ---- bag panel (always) ----
+        PR(0f, 0f, DW, DH, 0, 0, 0, 120);   // dim background
+
+        // ---------------- BAG ----------------
+        float bx = 30f, by = 30f, bw = 560f, bh = 430f;
         List<int> bagList = new List<int>();
         if (!shop) bagList = vis;
         else
@@ -742,79 +575,97 @@ public class ItemSystem : Script
                 bagList.Add(id);
             }
         }
-        Spr("panel_bag.png", 33f, 42f);
-        Spr("cat_on_" + catSel + ".png", 47f, 150f + 62f * catSel);
-        Txt(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
-            582f, 76f, 0.42f, 255, 255, 255, false);
+        PPanel(bx, by, bw, bh, 64f);
+        PT("BAG", bx + 20f, by + 8f, 0.6f, 255, 255, 255, 0);
+        PT("Check the items in your bag", bx + 20f, by + 40f, 0.3f,
+            255, 150, 215, 0);
+        PR(bx + bw - 180f, by + 16f, 160f, 32f, 70, 22, 76, 255);
+        PT(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
+            bx + bw - 30f, by + 20f, 0.36f, 255, 255, 255, 2);
+        PSidebar(bx, by, catSel, focus);
 
         int bStart = shop ? 0 : scrollRow * BCols;
         int bEnd = Math.Min(bagList.Count, bStart + BCols * BRows);
         if (bagList.Count == 0)
-            Txt("EMPTY", 540f, 300f, 0.6f, 200, 170, 195, false);
+            PT("EMPTY", bx + 340f, by + 200f, 0.5f, 200, 170, 195, 1);
         for (int i = bStart; i < bEnd; i++)
         {
             int id = bagList[i];
             int rr = (i - bStart) / BCols, cc = (i - bStart) % BCols;
-            float tx = BagGx + cc * BagSx, ty = BagGy + rr * BagSy;
+            float tx = bx + 140f + cc * 136f, ty = by + 80f + rr * 148f;
             if (!shop && i == sel && focus == 1)
-                RectD(tx - 3f, ty - 3f, 164.7f + 6f, 162f + 6f,
-                    255, 63, 180, 255);
-            Spr("tile_bag_" + id + ".png", tx, ty);
-            Txt("x" + Inv.Qty[id], tx + 151f, ty + 98f, 0.45f,
-                255, 255, 255, true);
+                PR(tx - 3f, ty - 3f, 134f, 146f, 255, 63, 180, 255);
+            PR(tx, ty, 128f, 140f, 36, 22, 42, 255);
+            DrawIcon(id, (tx + 64f) / DW, (ty + 52f) / DH, 0.095f);
+            PT("x" + Inv.Qty[id], tx + 120f, ty + 80f, 0.36f,
+                255, 255, 255, 2);
+            PT(Names[id], tx + 64f, ty + 110f, 0.34f, 240, 240, 245, 1);
         }
+        PT(shop ? "BACKSPACE Close" : "ENTER Use    TAB Category    I Close",
+            bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
 
-        // ---- shop panel ----
+        // ---------------- SHOP ----------------
         if (shop)
         {
-            Spr("panel_shop.png", 863f, 42f);
-            Spr("cat_on_" + catSel + ".png", 877f, 150f + 62f * catSel);
-            Spr(sellMode ? "seg_mode_sell.png" : "seg_mode_buy.png",
-                1109f, 146f);
-            Spr("seg_qty_" + QtyOptions[qtyIdx] + ".png", 1444.8f, 146f);
-            Txt(Game.Player.Money.ToString("N0"), 1537f, 76f, 0.42f,
-                255, 200, 60, true);
+            float sx = 610f, sy = 30f, sw = 640f, sh = 430f;
+            PPanel(sx, sy, sw, sh, 64f);
+            PT(sellMode ? "SELL" : "SHOP", sx + 20f, sy + 8f, 0.6f,
+                255, 255, 255, 0);
+            PT((sellMode ? "Selling" : "Buying") + "   Qty x" + q,
+                sx + 20f, sy + 40f, 0.3f, 255, 150, 215, 0);
+            PR(sx + sw - 180f, sy + 16f, 160f, 32f, 70, 22, 76, 255);
+            PT("$" + Game.Player.Money.ToString("N0"),
+                sx + sw - 30f, sy + 20f, 0.36f, 255, 200, 60, 2);
+            PSidebar(sx, sy, catSel, focus);
 
-            string m = sellMode ? "sell" : "buy";
             int sStart = scrollRow * BCols;
             int sEnd = Math.Min(vis.Count, sStart + BCols * BRows);
             if (vis.Count == 0)
-                Txt("NOTHING TO SELL", 1250f, 330f, 0.6f,
-                    200, 170, 195, false);
+                PT("NOTHING TO SHOW", sx + 380f, sy + 200f, 0.5f,
+                    200, 170, 195, 1);
             for (int i = sStart; i < sEnd; i++)
             {
                 int id = vis[i];
                 int rr = (i - sStart) / BCols, cc = (i - sStart) % BCols;
-                float tx = ShpGx + cc * ShpSx, ty = ShpGy + rr * ShpSy;
-                if (i == sel && focus == 1)
-                    RectD(tx - 3f, ty - 3f, 163.7f + 6f, 190f + 6f,
-                        255, 63, 180, 255);
-                Spr("tile_shop_" + m + "_" + id + ".png", tx, ty);
-                Txt("x" + Inv.Qty[id], tx + 151f, ty + 8f, 0.38f,
-                    255, 123, 208, true);
-                System.Drawing.SizeF pd = Dim("price_" + m + "_" + id + "_"
-                    + QtyOptions[qtyIdx] + ".png");
-                Spr("price_" + m + "_" + id + "_" + QtyOptions[qtyIdx]
-                    + ".png", tx + (163.7f - pd.Width) / 2f, ty + 124f);
+                float tx = sx + 140f + cc * 160f;
+                float ty = sy + 80f + rr * 156f;
+                bool on = (i == sel && focus == 1);
+                if (on) PR(tx - 3f, ty - 3f, 158f, 154f, 255, 63, 180, 255);
+                PR(tx, ty, 152f, 148f, 36, 22, 42, 255);
+                DrawIcon(id, (tx + 76f) / DW, (ty + 38f) / DH, 0.085f);
+                PT("x" + Inv.Qty[id], tx + 146f, ty + 4f, 0.3f,
+                    255, 123, 208, 2);
+                PT(Names[id], tx + 76f, ty + 76f, 0.34f, 240, 240, 245, 1);
+                int price = (sellMode ? SellPrice[id] : BuyPrice[id]) * q;
+                PT("$" + price, tx + 76f, ty + 98f, 0.34f, 255, 200, 60, 1);
+                PR(tx + 12f, ty + 122f, 128f, 20f, 255, 63, 180,
+                    on ? 255 : 160);
+                PT(sellMode ? "SELL" : "BUY", tx + 76f, ty + 122f, 0.3f,
+                    255, 255, 255, 1);
             }
-            Txt("T Buy/Sell    Q Quantity    Tab Category    "
-                + "Enter Confirm    Backspace Close",
-                836f, 910f, 0.34f, 255, 255, 255, false);
+            PT("T Buy/Sell   Q Qty   TAB Category   ENTER Confirm",
+                sx + 20f, sy + sh - 30f, 0.3f, 200, 200, 205, 0);
         }
 
-        // ---- description of the selected item (bag footer) ----
-        if (vis.Count > 0 && focus == 1 && !shop)
+        // ---------------- CATALOG ----------------
+        float cx = 30f, cy = 475f, cw = 1220f, ch = 225f;
+        PPanel(cx, cy, cw, ch, 48f);
+        PT("ALL ITEMS", cx + 20f, cy + 6f, 0.5f, 255, 255, 255, 0);
+        PT("HP " + p.Health + "    ARMOR " + p.Armor,
+            cx + cw - 20f, cy + 12f, 0.36f, 255, 255, 255, 2);
+        int curId = vis.Count > 0 ? vis[sel] : -1;
+        for (int id = 0; id < Names.Length; id++)
         {
-            System.Drawing.SizeF dd = Dim("desc_" + vis[sel] + ".png");
-            Spr("desc_" + vis[sel] + ".png", 789f - dd.Width, 534f);
+            float ix = cx + 10f + id * 172f, iy = cy + 58f;
+            if (id == curId)
+                PR(ix - 2f, iy - 2f, 168f, 124f, 255, 63, 180, 255);
+            PR(ix, iy, 164f, 120f, 36, 22, 42, 255);
+            DrawIcon(id, (ix + 82f) / DW, (iy + 44f) / DH, 0.09f);
+            PT(Names[id], ix + 82f, iy + 86f, 0.34f, 240, 240, 245, 1);
         }
-
-        // ---- catalog (always) ----
-        Spr("catalog.png", 33f, 610f);
-
-        // HP / armor
-        Txt("HP " + p.Health + "    ARMOR " + p.Armor,
-            60f, 912f, 0.34f, 255, 255, 255, false);
+        if (curId >= 0)
+            PT(Names[curId] + " - " + Desc[curId],
+                cx + 20f, cy + 190f, 0.34f, 255, 150, 215, 0);
     }
 
     // ---------- Main loop ----------
