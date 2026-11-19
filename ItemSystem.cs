@@ -487,17 +487,22 @@ public class ItemSystem : Script
     }
 
     // =====================================================================
-    //  PinkUI - drawn with native rects/text (NO PNG files needed)
-    //  Design space 1280x720. Replaces DrawUiOld + the old sprite UI.
+    //  PinkUI - PNG sprites (scripts\PinkUI\*.png) with rect fallback.
+    //  Design space 1280x720, kept un-stretched on any screen aspect.
     // =====================================================================
     const int BCols = 3;
     const int BRows = 2;
     const float DW = 1280f, DH = 720f;
+    const string UIDIR = "scripts\\PinkUI\\";
+    const string ICONDIR = "scripts\\PinkUI\\items\\";
+
+    static float SW { get { return GTA.UI.Screen.ScaledWidth; } }
+    static float NXd(float x) { return ((SW - DW) / 2f + x) / SW; }
 
     static void PR(float x, float y, float w, float h,
         int r, int g, int b, int a)
     {
-        Rect((x + w / 2f) / DW, (y + h / 2f) / DH, w / DW, h / DH,
+        Rect(NXd(x + w / 2f), (y + h / 2f) / DH, w / SW, h / DH,
             r, g, b, a);
     }
 
@@ -509,7 +514,7 @@ public class ItemSystem : Script
         Function.Call(Hash.SET_TEXT_SCALE, 0f, scale);
         Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, 255);
         Function.Call(Hash.SET_TEXT_DROP_SHADOW);
-        float nx = x / DW;
+        float nx = NXd(x);
         if (align == 1) Function.Call(Hash.SET_TEXT_CENTRE, true);
         else if (align == 2)
         {
@@ -524,71 +529,66 @@ public class ItemSystem : Script
             nx, y / DH, 0);
     }
 
-    static void PPanel(float x, float y, float w, float h, float hh)
+    Dictionary<string, GTA.UI.CustomSprite> sprs =
+        new Dictionary<string, GTA.UI.CustomSprite>();
+    bool sprOff;
+
+    // draws a PNG at design-pixel x,y,w,h. false = not available
+    bool Sprite(string path, float x, float y, float w, float h)
     {
-        PR(x - 3f, y - 3f, w + 6f, h + 6f, 255, 63, 180, 70);   // glow
-        PR(x - 1f, y - 1f, w + 2f, h + 2f, 255, 63, 180, 230);  // border
-        PR(x, y, w, h, 20, 10, 24, 240);                         // body
-        PR(x, y, w, hh, 44, 14, 48, 255);                        // header
-        PR(x, y + hh, w, 2f, 255, 63, 180, 255);                 // line
-        // pink slanted-look stripes (bottom right)
-        PR(x + w - 70f, y + h - 6f, 50f, 3f, 255, 63, 180, 200);
-        PR(x + w - 40f, y + h - 12f, 30f, 3f, 255, 63, 180, 120);
+        if (sprOff) return false;
+        try
+        {
+            GTA.UI.CustomSprite s;
+            if (!sprs.TryGetValue(path, out s))
+            {
+                s = File.Exists(path)
+                    ? new GTA.UI.CustomSprite(path,
+                        new System.Drawing.SizeF(w, h),
+                        new System.Drawing.PointF(0f, 0f))
+                    : null;
+                sprs[path] = s;
+            }
+            if (s == null) return false;
+            s.Size = new System.Drawing.SizeF(w * DW / SW, h);
+            s.Position = new System.Drawing.PointF(NXd(x) * DW, y);
+            s.Draw();
+            return true;
+        }
+        catch (Exception) { sprOff = true; return false; }
     }
 
-    static void PSidebar(float x, float y, int catSel, int focus)
+    bool Spr(string name, float x, float y, float w, float h)
+    {
+        return Sprite(UIDIR + name, x, y, w, h);
+    }
+
+    void Icon(int id, float cx, float cy, float size)
+    {
+        if (Sprite(ICONDIR + "item_" + id + ".png",
+            cx - size / 2f, cy - size / 2f, size, size)) return;
+        DrawIcon(id, NXd(cx), cy / DH, size / DH * 0.9f);
+    }
+
+    void Sidebar(float x, float y)
     {
         for (int i = 0; i < CatNames.Length; i++)
         {
             float sy = y + 80f + i * 44f;
             bool on = (i == catSel);
-            if (on && focus == 0) PR(x + 10f, sy, 116f, 38f, 255, 63, 180, 240);
-            else if (on) PR(x + 10f, sy, 116f, 38f, 150, 40, 110, 230);
-            else PR(x + 10f, sy, 116f, 38f, 38, 22, 44, 220);
+            string f = on ? (focus == 0 ? "cat_on.png" : "cat_dim.png")
+                          : "cat_off.png";
+            if (!Spr(f, x + 10f, sy, 116f, 38f))
+            {
+                if (on && focus == 0) PR(x + 10f, sy, 116f, 38f, 255, 63, 180, 240);
+                else if (on) PR(x + 10f, sy, 116f, 38f, 150, 40, 110, 230);
+                else PR(x + 10f, sy, 116f, 38f, 38, 22, 44, 220);
+            }
             PT(CatNames[i], x + 24f, sy + 8f, 0.34f, 255, 255, 255, 0);
         }
     }
 
-    // ---- item pictures: scripts\\PinkUI\\items\\item_0..6.png (falls back to pixel icons) ----
-    const string ICONDIR = "scripts\\PinkUI\\items\\";
-    Dictionary<int, GTA.UI.CustomSprite> iconSpr =
-        new Dictionary<int, GTA.UI.CustomSprite>();
-    bool iconsOff;
-
-    // cx, cy, size in design pixels (1280x720)
-    void Icon(int id, float cx, float cy, float size)
-    {
-        if (!iconsOff)
-        {
-            try
-            {
-                GTA.UI.CustomSprite s;
-                if (!iconSpr.TryGetValue(id, out s))
-                {
-                    string path = ICONDIR + "item_" + id + ".png";
-                    s = File.Exists(path)
-                        ? new GTA.UI.CustomSprite(path,
-                            new System.Drawing.SizeF(size, size),
-                            new System.Drawing.PointF(0f, 0f))
-                        : null;
-                    iconSpr[id] = s;
-                }
-                if (s != null)
-                {
-                    float k = GTA.UI.Screen.ScaledWidth / DW;
-                    s.Size = new System.Drawing.SizeF(size, size);
-                    s.Position = new System.Drawing.PointF(
-                        cx * k - size / 2f, cy - size / 2f);
-                    s.Draw();
-                    return;
-                }
-            }
-            catch (Exception) { iconsOff = true; }
-        }
-        DrawIcon(id, cx / DW, cy / DH, size / DH * 0.9f);
-    }
-
-    // Bag (mode 1) or Shop (mode 2), one centered panel
+    // Bag (mode 1) or Shop (mode 2): one centered panel
     void DrawUi(Ped p)
     {
         BuildVisible();
@@ -600,24 +600,31 @@ public class ItemSystem : Script
         if (selRow >= scrollRow + BRows) scrollRow = selRow - BRows + 1;
         if (scrollRow < 0) scrollRow = 0;
 
-        PR(0f, 0f, DW, DH, 0, 0, 0, 110);   // dim background
+        Rect(0.5f, 0.5f, 1f, 1f, 0, 0, 0, 120);   // dim background
 
-        // centered panel (top-left stays free for the F1 menu)
         float bx = 320f, by = 110f, bw = 640f, bh = 500f;
-        PPanel(bx, by, bw, bh, 64f);
+        if (!Spr(shop ? "panel_shop.png" : "panel_bag.png",
+            bx - 10f, by - 10f, bw + 20f, bh + 20f))
+        {
+            PR(bx - 1f, by - 1f, bw + 2f, bh + 2f, 255, 63, 180, 230);
+            PR(bx, by, bw, bh, 20, 10, 24, 240);
+            PR(bx, by, bw, 64f, 44, 14, 48, 255);
+            PR(bx, by + 64f, bw, 2f, 255, 63, 180, 255);
+        }
         PT(shop ? (sellMode ? "SELL" : "SHOP") : "BAG",
-            bx + 20f, by + 8f, 0.6f, 255, 255, 255, 0);
+            bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
         PT(shop ? ((sellMode ? "Selling" : "Buying") + "   Qty x" + q)
                 : "Check the items in your bag",
-            bx + 20f, by + 40f, 0.3f, 255, 150, 215, 0);
-        PR(bx + bw - 190f, by + 16f, 170f, 32f, 70, 22, 76, 255);
+            bx + 76f, by + 38f, 0.3f, 255, 150, 215, 0);
+        if (!Spr("pill.png", bx + bw - 190f, by + 16f, 170f, 32f))
+            PR(bx + bw - 190f, by + 16f, 170f, 32f, 70, 22, 76, 255);
         if (shop)
             PT("$" + Game.Player.Money.ToString("N0"),
                 bx + bw - 30f, by + 20f, 0.36f, 255, 200, 60, 2);
         else
             PT(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
                 bx + bw - 30f, by + 20f, 0.36f, 255, 255, 255, 2);
-        PSidebar(bx, by, catSel, focus);
+        Sidebar(bx, by);
 
         int start = scrollRow * BCols;
         int end = Math.Min(vis.Count, start + BCols * BRows);
@@ -632,45 +639,51 @@ public class ItemSystem : Script
             float tx = bx + 140f + cc * 158f;
             float ty = by + 80f + rr * 178f;
             bool on = (i == sel && focus == 1);
-            if (on) PR(tx - 3f, ty - 3f, 156f, 176f, 255, 63, 180, 255);
-            PR(tx, ty, 150f, 170f, on ? 62 : 36, on ? 24 : 22,
-                on ? 66 : 42, 255);
-            PR(tx + 20f, ty + 118f, 110f, 2f, 255, 63, 180, 90);
 
-            // owned amount pill
-            PR(tx + 98f, ty + 8f, 44f, 20f, 90, 28, 90, 255);
+            if (!Spr(on ? "tile_sel.png" : "tile.png",
+                tx - 8f, ty - 8f, 166f, 186f))
+            {
+                if (on) PR(tx - 3f, ty - 3f, 156f, 176f, 255, 63, 180, 255);
+                PR(tx, ty, 150f, 170f, on ? 62 : 36, on ? 24 : 22,
+                    on ? 66 : 42, 255);
+            }
+
+            if (!Spr("qty.png", tx + 98f, ty + 8f, 44f, 20f))
+                PR(tx + 98f, ty + 8f, 44f, 20f, 90, 28, 90, 255);
             PT("x" + Inv.Qty[id], tx + 138f, ty + 9f, 0.3f,
                 255, 255, 255, 2);
 
             if (!shop)
             {
-                Icon(id, tx + 75f, ty + 70f, 104f);
+                Spr("pad.png", tx + 14f, ty + 94f, 122f, 28f);
+                Icon(id, tx + 75f, ty + 64f, 100f);
                 PT(Names[id], tx + 75f, ty + 130f, 0.36f,
                     240, 240, 245, 1);
             }
             else
             {
-                Icon(id, tx + 75f, ty + 52f, 82f);
-                PT(Names[id], tx + 75f, ty + 94f, 0.34f,
+                Spr("pad.png", tx + 26f, ty + 64f, 98f, 24f);
+                Icon(id, tx + 75f, ty + 44f, 78f);
+                PT(Names[id], tx + 75f, ty + 92f, 0.34f,
                     240, 240, 245, 1);
                 int price = (sellMode ? SellPrice[id] : BuyPrice[id]) * q;
-                PT("$" + price, tx + 75f, ty + 114f, 0.34f,
+                PT("$" + price, tx + 75f, ty + 112f, 0.34f,
                     255, 200, 60, 1);
-                PR(tx + 14f, ty + 142f, 122f, 20f, 255, 63, 180,
-                    on ? 255 : 150);
+                if (!Spr(on ? "btn.png" : "btn_dim.png",
+                    tx + 14f, ty + 142f, 122f, 20f))
+                    PR(tx + 14f, ty + 142f, 122f, 20f, 255, 63, 180,
+                        on ? 255 : 150);
                 PT(sellMode ? "SELL" : "BUY", tx + 75f, ty + 142f, 0.3f,
                     255, 255, 255, 1);
             }
         }
 
-        // description of the selected item
         if (vis.Count > 0)
         {
             int id = vis[sel];
             PT(Names[id] + " - " + Desc[id],
                 bx + 140f, by + bh - 62f, 0.34f, 255, 150, 215, 0);
         }
-
         PT(shop ? "T Buy/Sell   Q Qty   TAB Category   ENTER Confirm   BACKSPACE Close"
                 : "ENTER Use    TAB Category    I Close",
             bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
