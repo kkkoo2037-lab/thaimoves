@@ -38,7 +38,7 @@ public class DeathScreen : Script
     static bool ENABLED = true;
 
     // stop the game's death audio scene while dead (try if the sound is bad)
-    static bool STOP_DEATH_AUDIO = false;
+    static bool STOP_DEATH_AUDIO = true;
 
     // respawn point (Central Los Santos Medical Center)
     static readonly Vector3 Hospital = new Vector3(341.0f, -1397.3f, 32.5f);
