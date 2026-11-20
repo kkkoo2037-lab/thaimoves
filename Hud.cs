@@ -31,7 +31,7 @@ public class Hud : Script
     const float STAMINA_REGEN_IDLE = 9f;
     const float STAMINA_REGEN_MOVE = 4f;
     const float SPRINT_UNLOCK_AT = 20f;                  // % to sprint again
-    const string HUDDIR = "scripts\\PinkUI\\hud\\";
+    const string HUDDIR = "scripts\\PinkUI\\hud2\\";
     const string SAVEFILE = "scripts\\needs.txt";
 
     // ===== draw space 1280x720 =====
@@ -113,6 +113,11 @@ public class Hud : Script
     // PNG (always drawn on top of rects and text)
     bool Spr(string name, float x, float y, float w, float h)
     {
+        return SprA(name, x, y, w, h, 255);
+    }
+
+    bool SprA(string name, float x, float y, float w, float h, int alpha)
+    {
         if (sprOff) return false;
         try
         {
@@ -130,6 +135,7 @@ public class Hud : Script
             if (s == null) return false;
             s.Size = new System.Drawing.SizeF(w * DW / SW, h);
             s.Position = new System.Drawing.PointF(NX(x) * DW, y);
+            s.Color = System.Drawing.Color.FromArgb(alpha, 255, 255, 255);
             s.Draw();
             return true;
         }
@@ -246,68 +252,105 @@ public class Hud : Script
         }
     }
 
-    // ---------- on foot (bottom left) ----------
-    const float FS = 0.72f;          // size of the foot HUD
+    // ===========================================================
+    //  Pictures are cut from the reference image (scripts\PinkUI\hud2).
+    //  All numbers below are pixels of that reference picture.
+    // ===========================================================
 
+    // ---------- shared drawing ----------
+    // panel PNGs have transparent windows (holes). The dark fill of the
+    // windows is drawn here so text / bars can show through them.
+    void Panel(string spr, float x, float y, float w, float h, float m,
+        float[][] holes)
+    {
+        foreach (float[] hl in holes)
+            PR(x + hl[0], y + hl[1], hl[2], hl[3], 8, 12, 10, 255);
+        if (!Spr(spr, x - m, y - m, w + 2f * m, h + 2f * m))
+            PR(x, y, w, h, 8, 12, 10, 255);          // no PNG: plain box
+    }
+
+    // smooth horizontal bar (dark track + gradient fill + shine)
+    static void HBar(float x, float y, float w, float h, float frac,
+        int r1, int g1, int b1, int r2, int g2, int b2)
+    {
+        if (frac < 0f) frac = 0f; if (frac > 1f) frac = 1f;
+        PR(x - 1f, y - 1f, w + 2f, h + 2f, 40, 70, 52, 255);   // rim
+        PR(x, y, w, h, 14, 22, 18, 255);                       // track
+        const int N = 28;
+        float sw = w / N;
+        for (int i = 0; i < N; i++)
+        {
+            float t = i / (float)(N - 1);
+            float x0 = x + i * sw;
+            float lit = frac * N - i;
+            if (lit <= 0f) break;
+            if (lit > 1f) lit = 1f;
+            int r = (int)(r1 + (r2 - r1) * t);
+            int g = (int)(g1 + (g2 - g1) * t);
+            int b = (int)(b1 + (b2 - b1) * t);
+            PR(x0, y, sw * lit + 0.6f, h, r, g, b, 255);
+        }
+        PR(x, y, w * frac, h * 0.32f, 255, 255, 255, 38);       // shine
+    }
+
+    // ---------- on foot (bottom left) ----------
     void DrawFoot(Ped p)
     {
-        float pw = 330f * FS, ph = 70f * FS;
-        float px = 18f, py = 698f - ph;
+        float px = 18f, py = 648f, pw = 250f, ph = 50f;
 
         float hp = (p.Health - 100f) / (float)(p.MaxHealth - 100);
         if (hp < 0f) hp = 0f; if (hp > 1f) hp = 1f;
+        float ar = p.Armor / 100f;
+        if (ar < 0f) ar = 0f; if (ar > 1f) ar = 1f;
         float st = Needs.Stamina / 100f;
 
-        Frame("panel.png", px, py, pw, ph, 4f * FS, 6f * FS, 12, 18, 15);
+        Panel("st_panel.png", px, py, pw, ph, 6f,
+            new float[][] { new float[] { 38f, 6f, 202f, 38f } });
 
-        // health bar
-        float bx = px + 14f * FS, bw = 302f * FS;
-        float hy = py + 12f * FS, hh = 26f * FS;
-        PR(bx, hy, bw, hh, 24, 34, 28, 255);
-        int hr = hp < 0.25f ? 230 : 40, hg = hp < 0.25f ? 60 : 205, hb = hp < 0.25f ? 60 : 70;
-        PR(bx, hy, bw * hp, hh, hr, hg, hb, 255);
-        PR(bx, hy, bw * hp, hh * 0.3f, Math.Min(255, hr + 50),
-            Math.Min(255, hg + 40), Math.Min(255, hb + 40), 255);
-        PT((int)Math.Round(hp * 100f) + "%", bx + bw - 4f, hy - 1f, 0.30f,
+        float bx = px + 42f, bw = 194f;
+
+        // health
+        if (hp < 0.25f) HBar(bx, py + 8f, bw, 14f, hp, 200, 40, 40, 255, 90, 80);
+        else HBar(bx, py + 8f, bw, 14f, hp, 30, 190, 50, 110, 255, 90);
+        PT((int)Math.Round(hp * 100f) + "%", bx + bw - 5f, py + 6f, 0.27f,
             255, 255, 255, 2);
 
-        // stamina bar
-        float sy = py + 46f * FS, sh = 12f * FS;
-        PR(bx, sy, bw, sh, 24, 34, 28, 255);
-        PR(bx, sy, bw * st, sh, sprintLocked ? 230 : 150,
-            sprintLocked ? 120 : 235, sprintLocked ? 40 : 60, 255);
-        PT((int)Math.Round(st * 100f) + "%", bx + bw - 4f, sy - 3f, 0.20f,
+        // armor
+        HBar(bx, py + 27f, bw, 14f, ar, 0, 190, 200, 40, 255, 235);
+        PT((int)Math.Round(ar * 100f) + "%", bx + bw - 5f, py + 25f, 0.27f,
             255, 255, 255, 2);
 
-        Spr("ic_heart.png", bx + 4f, hy + (hh - 12f) / 2f, 12f, 12f);
-        Spr("ic_bolt.png", bx + 3f, sy + (sh - 11f) / 2f, 11f, 11f);
+        Spr("ic_heart.png", px + 19f, py + 8f, 14f, 14f);
+        Spr("ic_shield.png", px + 19f, py + 27f, 14f, 14f);
 
-        // food ring + stress ring
+        // rings: food, stamina (cup), stress (brain)
         float cy = py + ph / 2f;
-        float rad = 27f * FS, dot = 4.8f * FS, disc = 40f * FS;
-        float c1 = px + pw + 26f, c2 = c1 + 42f;
+        float rad = 18f, dot = 3.4f, disc = 30f;
+        float c1 = px + pw + 24f, c2 = c1 + 42f, c3 = c2 + 42f;
 
         float food = Needs.Food / 100f;
         if (food < 0.25f) Ring(c1, cy, rad, dot, food, 235, 70, 60);
         else Ring(c1, cy, rad, dot, food, 60, 235, 90);
         Spr("gauge_food.png", c1 - disc / 2f, cy - disc / 2f, disc, disc);
 
+        if (sprintLocked) Ring(c2, cy, rad, dot, st, 240, 140, 40);
+        else Ring(c2, cy, rad, dot, st, 150, 240, 60);
+        Spr("gauge_cup.png", c2 - disc / 2f, cy - disc / 2f, disc, disc);
+
         float stress = Needs.Stress / 100f;
-        if (stress > 0.7f) Ring(c2, cy, rad, dot, stress, 235, 70, 60);
-        else if (stress > 0.4f) Ring(c2, cy, rad, dot, stress, 240, 200, 50);
-        else Ring(c2, cy, rad, dot, stress, 60, 235, 90);
-        Spr("gauge_mind.png", c2 - disc / 2f, cy - disc / 2f, disc, disc);
+        if (stress > 0.7f) Ring(c3, cy, rad, dot, stress, 235, 70, 60);
+        else if (stress > 0.4f) Ring(c3, cy, rad, dot, stress, 240, 200, 50);
+        else Ring(c3, cy, rad, dot, stress, 60, 235, 90);
+        Spr("gauge_mind.png", c3 - disc / 2f, cy - disc / 2f, disc, disc);
     }
 
     // ---------- in a vehicle (bottom centre) ----------
-    const float VS = 0.74f;          // size of the vehicle HUD
-
-    // light chevron next to the car: dark, lit from the bottom to the
-    // top by 'lit' (0..1) when you press the accelerator
-    void Chevron(float x, float y, bool flip, float lit)
+    // chevron made of stripes, dark until the accelerator lights it up
+    // from the bottom to the top ('lit' 0..1). k = size (1 = 50x118)
+    void Chevron(float x, float y, float k, bool flip, float lit)
     {
         const float W = 50f, H = 118f;
-        const int N = 40;
+        const int N = 36;
         float sh = H / N;
         for (int i = 0; i < N; i++)
         {
@@ -316,55 +359,27 @@ public class Hud : Script
             if (ym <= 59f) { xl = 30f * ym / 59f; xr = 16f + 32f * ym / 59f; }
             else
             {
-                float k = H - ym;
-                xl = 30f * k / 59f; xr = 16f + 32f * k / 59f;
+                float kk = H - ym;
+                xl = 30f * kk / 59f; xr = 16f + 32f * kk / 59f;
             }
             float t = 1f - ym / H;                        // 0 bottom .. 1 top
-            float a = (lit - t) * 14f + 0.5f;             // soft lit edge
+            float a = (lit - t) * 14f + 0.5f;
             if (a < 0f) a = 0f; if (a > 1f) a = 1f;
 
             float gx = flip ? W - xr : xl;
-            float px = x + gx * VS, pw = (xr - xl) * VS;
-            float py = y + i * sh * VS, ph = sh * VS + 0.7f;
+            float px = x + gx * k, pw = (xr - xl) * k;
+            float py = y + i * sh * k, ph = sh * k + 0.7f;
 
-            PR(px, py, pw, ph, 20, 62, 36, 255);          // dark base
+            PR(px, py, pw, ph, 18, 56, 32, 255);          // dark base
             if (a > 0f)
             {
-                PR(px - 1.5f, py, pw + 3f, ph, 70, 255, 110, (int)(60 * a));
+                PR(px - 1.2f, py, pw + 2.4f, ph, 70, 255, 110, (int)(60 * a));
                 bool head = lit > 0.02f && Math.Abs(t - lit) < 0.06f;
                 int r = head ? 215 : 60 + (int)(100 * t);
                 int g = head ? 255 : 190 + (int)(65 * t);
                 int b = head ? 225 : 100;
                 PR(px, py, pw, ph, r, g, b, (int)(255 * a));
             }
-        }
-    }
-
-    // fuel: one smooth slanted tube, filled from the bottom
-    void Tube(float x, float yBottom, float frac)
-    {
-        const int N = 40;
-        float H = 70f * VS, wd = 8f * VS, slant = 14f * VS;
-        float sh = H / N;
-        bool low = frac < 0.15f;
-        for (int i = 0; i < N; i++)
-        {
-            float y = yBottom - (i + 1) * sh;
-            float x0 = x + slant * (i / (float)N);
-            PR(x0 - 1f, y, wd + 2f, sh + 0.6f, 60, 95, 72, 255);   // rim
-            PR(x0, y, wd, sh + 0.6f, 18, 28, 22, 255);            // empty
-        }
-        float lit = frac * N;
-        for (int i = 0; i < N && i < lit + 1f; i++)
-        {
-            float a = lit - i; if (a < 0f) a = 0f; if (a > 1f) a = 1f;
-            float t = i / (float)N;
-            float y = yBottom - (i + 1) * sh;
-            float x0 = x + slant * t;
-            int r = low ? 235 : 40 + (int)(130 * t);
-            int g = low ? 70 : 200 + (int)(55 * t);
-            int b = low ? 60 : 75;
-            PR(x0, y, wd, sh + 0.6f, r, g, b, (int)(255 * a));
         }
     }
 
@@ -387,7 +402,6 @@ public class Hud : Script
         float ratio = sp / top;
         if (sp < 1f) { shownGear = 1; return shownGear; }
 
-        // go up / down with a small margin so it does not flicker
         while (shownGear < 6 && ratio > GearAt[shownGear - 1] + 0.02f)
             shownGear++;
         while (shownGear > 1 && ratio < GearAt[shownGear - 2] - 0.02f)
@@ -405,57 +419,61 @@ public class Hud : Script
         float k = target > throttle ? 5f : 3.5f;
         throttle += (target - throttle) * Math.Min(1f, k * dt);
 
-        float pw = 250f * VS, ph = 105f * VS;
-        float y0 = 698f - ph;
-        float carW = 54f * VS, carH = 100f * VS;
-        float carX = 640f - carW / 2f;
-        float chW = 50f * VS, chH = 118f * VS;
-        float chLx = carX - 4f - chW;
-        float chRx = carX + carW + 4f;
-        float lx = chLx - 3f - pw;
-        float rx = chRx + chW + 3f;
-        float chY = y0 + ph / 2f - chH / 2f;
+        // layout: left panel | centre hex | right panel
+        float x0 = 401f;
+        float lw = 190f, lh = 72f, cw = 110f, ch = 88f;
+        float ly = 698f - lh, cyy = 698f - ch;
+        float lx = x0, cx = x0 + 184f, rx = cx + cw - 6f;
 
-        // light chevrons (draw first, panels sit next to them)
-        Chevron(chLx, chY, false, throttle);
-        Chevron(chRx, chY, true, throttle);
-
-        Frame("veh_left.png", lx, y0, pw, ph, 4f * VS, 8f * VS, 12, 18, 15);
-        Frame("veh_right.png", rx, y0, pw, ph, 4f * VS, 8f * VS, 12, 18, 15);
-
-        // ---- speed ----
+        // ---------- left: speed + fuel ----------
+        Panel("v_left.png", lx, ly, lw, lh, 6f,
+            new float[][] { new float[] { 52f, 8f, 124f, 56f } });
         int kmh = (int)Math.Round(v.Speed * 3.6f);
-        PT(kmh.ToString(), lx + 150f * VS, y0 + 12f * VS, 0.88f, 70, 235, 100, 1);
-        PT("KM/H", lx + 236f * VS, y0 + 76f * VS, 0.34f, 235, 245, 238, 2);
+        PT(kmh.ToString(), lx + 114f, ly + 7f, 0.85f, 70, 235, 100, 1);
+        PT("KM/H", lx + 172f, ly + 36f, 0.26f, 235, 245, 238, 2);
+        float fuel = FuelSys.Frac(v);
+        if (fuel < 0.15f) HBar(lx + 72f, ly + 50f, 96f, 6f, fuel, 200, 40, 40, 255, 90, 80);
+        else HBar(lx + 72f, ly + 50f, 96f, 6f, fuel, 30, 190, 50, 110, 255, 90);
+        Spr("ic_bolt.png", lx + 14f, ly + 12f, 14f, 14f);
+        Spr("ic_pump.png", lx + 56f, ly + 47f, 12f, 12f);
 
-        // fuel (left edge)
-        Tube(lx + 14f * VS, y0 + 92f * VS, FuelSys.Frac(v));
-
-        // ---- gear ----
+        // ---------- right: gear + throttle ----------
+        Panel("v_right.png", rx, ly, lw, lh, 6f,
+            new float[][] { new float[] { 14f, 8f, 124f, 56f } });
         int gear = EstimateGear(v);
         string cur;
         bool reversing = Vector3.Dot(v.Velocity, v.ForwardVector) < -0.5f;
         if (reversing) cur = "R";
-        else if (gear <= 0 && kmh < 2) cur = "N";
-        else cur = Math.Max(1, gear).ToString();
-        PT(cur, rx + 125f * VS, y0 + 12f * VS, 0.92f, 255, 255, 255, 1);
-        if (!reversing && gear >= 1)
+        else if (gear <= 1 && kmh < 2) cur = "N";
+        else cur = gear.ToString();
+        PT(cur, rx + 76f, ly + 4f, 1.0f, 255, 255, 255, 1);
+        if (!reversing && kmh >= 2)
         {
             if (gear > 1)
-                PT((gear - 1).ToString(), rx + 80f * VS, y0 + 28f * VS, 0.52f,
-                    120, 140, 125, 1);
+                PT((gear - 1).ToString(), rx + 34f, ly + 22f, 0.5f, 120, 140, 125, 1);
             if (gear < 6)
-                PT((gear + 1).ToString(), rx + 170f * VS, y0 + 28f * VS, 0.52f,
-                    120, 140, 125, 1);
+                PT((gear + 1).ToString(), rx + 118f, ly + 22f, 0.5f, 120, 140, 125, 1);
         }
-        PT("GEAR", rx + 14f * VS, y0 + 76f * VS, 0.34f, 235, 245, 238, 0);
+        HBar(rx + 22f, ly + 50f, 108f, 6f, throttle, 30, 160, 60, 150, 255, 100);
+        Spr("ic_speedo.png", rx + lw - 34f, ly + 12f, 14f, 14f);
 
-        // ---- centre: car + tyres ----
+        // ---------- centre: chevrons + car ----------
+        Panel("v_center.png", cx, cyy, cw, ch, 6f,
+            new float[][] { new float[] { 14f, 16f, 82f, 60f },
+                            new float[] { 33f, 2.5f, 44f, 9f } });
+        PT("GEAR", cx + 55f, cyy + 1.5f, 0.2f, 235, 245, 238, 1);
+
+        float kc = 0.5f;
+        float chY = cyy + 46f - 118f * kc / 2f;
+        Chevron(cx + 18f, chY, kc, true, throttle);          // <
+        Chevron(cx + 67f, chY, kc, false, throttle);         // >
+
         int cls = Function.Call<int>(Hash.GET_VEHICLE_CLASS, v);
         if (cls != 14 && cls != 15 && cls != 16)    // not boat / heli / plane
         {
-            float cy = y0 + (ph - carH) / 2f;
-            Spr("car.png", carX, cy, carW, carH);
+            float carW = 26f, carH = 48f, sc = carW / 54f;
+            float carX = cx + 55f - carW / 2f, carY = cyy + 22f;
+            Spr("car.png", carX, carY, carW, carH);
 
             // tyre index: 0 front left, 1 front right, 4 rear left, 5 rear right
             int[] idx = { 0, 1, 4, 5 };
@@ -465,8 +483,8 @@ public class Hud : Script
             {
                 if (Function.Call<bool>(Hash.IS_VEHICLE_TYRE_BURST,
                     v, idx[i], false))
-                    Spr("tire_red.png", carX + (wx[i] - 3f) * VS,
-                        cy + (wy[i] - 3f) * VS, 14f * VS, 28f * VS);
+                    Spr("tire_red.png", carX + (wx[i] - 3f) * sc,
+                        carY + (wy[i] - 3f) * sc, 14f * sc, 28f * sc);
             }
         }
     }
