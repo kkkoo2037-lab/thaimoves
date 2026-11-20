@@ -31,7 +31,6 @@ public class Hud : Script
     const float STAMINA_REGEN_IDLE = 9f;
     const float STAMINA_REGEN_MOVE = 4f;
     const float SPRINT_UNLOCK_AT = 20f;                  // % to sprint again
-    const float TANK_MAX = 65f;                          // GTA fuel scale
     const string HUDDIR = "scripts\\PinkUI\\hud\\";
     const string SAVEFILE = "scripts\\needs.txt";
 
@@ -341,24 +340,59 @@ public class Hud : Script
         }
     }
 
-    // fuel: 10 little slanted segments, bottom to top
-    void Segments(float x, float yBottom, float frac)
+    // fuel: one smooth slanted tube, filled from the bottom
+    void Tube(float x, float yBottom, float frac)
     {
-        for (int i = 0; i < 10; i++)
+        const int N = 40;
+        float H = 70f * VS, wd = 8f * VS, slant = 14f * VS;
+        float sh = H / N;
+        bool low = frac < 0.15f;
+        for (int i = 0; i < N; i++)
         {
-            float y = yBottom - (i + 1) * 9f * VS;
-            float x0 = x + i * 1.6f * VS;
-            float lo = i / 10f, hi = (i + 1) / 10f;
-            float t = (frac - lo) / (hi - lo);
-            if (t < 0f) t = 0f; if (t > 1f) t = 1f;
-            PR(x0, y, 10f * VS, 7f * VS, 30, 46, 38, 230);
-            if (t > 0f)
-            {
-                int g = 200 + (int)(55 * (i / 9f));
-                int r = 40 + (int)(130 * (i / 9f));
-                PR(x0, y, 10f * VS, 7f * VS, r, g, 70, (int)(255 * t));
-            }
+            float y = yBottom - (i + 1) * sh;
+            float x0 = x + slant * (i / (float)N);
+            PR(x0 - 1f, y, wd + 2f, sh + 0.6f, 60, 95, 72, 255);   // rim
+            PR(x0, y, wd, sh + 0.6f, 18, 28, 22, 255);            // empty
         }
+        float lit = frac * N;
+        for (int i = 0; i < N && i < lit + 1f; i++)
+        {
+            float a = lit - i; if (a < 0f) a = 0f; if (a > 1f) a = 1f;
+            float t = i / (float)N;
+            float y = yBottom - (i + 1) * sh;
+            float x0 = x + slant * t;
+            int r = low ? 235 : 40 + (int)(130 * t);
+            int g = low ? 70 : 200 + (int)(55 * t);
+            int b = low ? 60 : 75;
+            PR(x0, y, wd, sh + 0.6f, r, g, b, (int)(255 * a));
+        }
+    }
+
+    // gear guessed from the speed (the game's own gear is not reliable)
+    Dictionary<int, float> topSpeed = new Dictionary<int, float>();
+    static readonly float[] GearAt = { 0.10f, 0.22f, 0.36f, 0.52f, 0.72f };
+    int shownGear = 1;
+    int gearVeh;
+
+    int EstimateGear(Vehicle v)
+    {
+        int key = v.Model.Hash;
+        float sp = v.Speed;
+        float top;
+        if (!topSpeed.TryGetValue(key, out top)) top = 45f;   // ~160 km/h
+        if (sp > top) top = sp;
+        topSpeed[key] = top;
+
+        if (gearVeh != v.Handle) { gearVeh = v.Handle; shownGear = 1; }
+        float ratio = sp / top;
+        if (sp < 1f) { shownGear = 1; return shownGear; }
+
+        // go up / down with a small margin so it does not flicker
+        while (shownGear < 6 && ratio > GearAt[shownGear - 1] + 0.02f)
+            shownGear++;
+        while (shownGear > 1 && ratio < GearAt[shownGear - 2] - 0.02f)
+            shownGear--;
+        return shownGear;
     }
 
     void DrawVehicle(Ped p, Vehicle v, float dt)
@@ -395,12 +429,10 @@ public class Hud : Script
         PT("KM/H", lx + 236f * VS, y0 + 76f * VS, 0.34f, 235, 245, 238, 2);
 
         // fuel (left edge)
-        float fuel = v.FuelLevel / TANK_MAX;
-        if (fuel < 0f) fuel = 0f; if (fuel > 1f) fuel = 1f;
-        Segments(lx + 16f * VS, y0 + 96f * VS, fuel);
+        Tube(lx + 14f * VS, y0 + 92f * VS, FuelSys.Frac(v));
 
         // ---- gear ----
-        int gear = v.CurrentGear;
+        int gear = EstimateGear(v);
         string cur;
         bool reversing = Vector3.Dot(v.Velocity, v.ForwardVector) < -0.5f;
         if (reversing) cur = "R";
@@ -412,7 +444,7 @@ public class Hud : Script
             if (gear > 1)
                 PT((gear - 1).ToString(), rx + 80f * VS, y0 + 28f * VS, 0.52f,
                     120, 140, 125, 1);
-            if (gear < v.HighGear)
+            if (gear < 6)
                 PT((gear + 1).ToString(), rx + 170f * VS, y0 + 28f * VS, 0.52f,
                     120, 140, 125, 1);
         }
