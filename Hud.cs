@@ -31,7 +31,6 @@ public class Hud : Script
     const float STAMINA_REGEN_IDLE = 9f;
     const float STAMINA_REGEN_MOVE = 4f;
     const float SPRINT_UNLOCK_AT = 20f;                  // % to sprint again
-    const string HUDDIR = "scripts\\PinkUI\\hud2\\";
     const string SAVEFILE = "scripts\\needs.txt";
 
     // ===== draw space 1280x720 =====
@@ -48,6 +47,7 @@ public class Hud : Script
     float starveTimer;
     bool sprintLocked;
     bool wasDead;
+    bool reported;
     bool shaking;
     int nextSave;
 
@@ -110,30 +110,72 @@ public class Hud : Script
         Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, nx, y / DH, 0);
     }
 
+    // look for a picture in a few places (first hit is remembered)
+    static readonly string[] Dirs = {
+        "scripts\\PinkUI\\hud\\", "scripts/PinkUI/hud/",
+        "scripts\\PinkUI\\", "scripts/PinkUI/",
+        "scripts\\hud\\", "scripts/hud/"
+    };
+    Dictionary<string, string> found = new Dictionary<string, string>();
+    List<string> missing = new List<string>();
+
+    string Find(string name)
+    {
+        string p;
+        if (found.TryGetValue(name, out p)) return p;
+        foreach (string d in Dirs)
+        {
+            try
+            {
+                if (File.Exists(d + name)) { found[name] = d + name; return d + name; }
+            }
+            catch (Exception) { }
+        }
+        found[name] = null;
+        missing.Add(name);
+        return null;
+    }
+
     // PNG (always drawn on top of rects and text)
     bool Spr(string name, float x, float y, float w, float h)
     {
         if (sprOff) return false;
         try
         {
-            string path = HUDDIR + name;
+            string path = Find(name);
+            if (path == null) return false;
             GTA.UI.CustomSprite s;
             if (!sprs.TryGetValue(path, out s))
             {
-                s = File.Exists(path)
-                    ? new GTA.UI.CustomSprite(path,
-                        new System.Drawing.SizeF(w, h),
-                        new System.Drawing.PointF(0f, 0f))
-                    : null;
+                s = new GTA.UI.CustomSprite(path,
+                    new System.Drawing.SizeF(w, h),
+                    new System.Drawing.PointF(0f, 0f));
                 sprs[path] = s;
             }
-            if (s == null) return false;
             s.Size = new System.Drawing.SizeF(w * DW / SW, h);
             s.Position = new System.Drawing.PointF(NX(x) * DW, y);
             s.Draw();
             return true;
         }
-        catch (Exception) { sprOff = true; return false; }
+        catch (Exception ex)
+        {
+            sprOff = true;
+            WriteLog("Sprite error: " + ex.Message);
+            return false;
+        }
+    }
+
+    void WriteLog(string extra)
+    {
+        try
+        {
+            string t = "cwd: " + Directory.GetCurrentDirectory() + "\n"
+                + (extra ?? "") + "\n"
+                + "missing pictures (" + missing.Count + "):\n"
+                + string.Join("\n", missing.ToArray()) + "\n";
+            File.WriteAllText("scripts\\hud_log.txt", t);
+        }
+        catch (Exception) { }
     }
 
     // frame with native fill underneath (see PNG: band + transparent hole)
@@ -181,6 +223,17 @@ public class Hud : Script
             Needs.Stress = 0f;
             Needs.Stamina = 100f;
             lastHealth = -1f;
+        }
+
+        if (!reported && now > 4000)
+        {
+            reported = true;
+            Find("st_panel.png"); Find("v_left.png"); Find("car.png");
+            WriteLog(sprOff ? "sprites switched off" : "");
+            if (missing.Count > 0)
+                GTA.UI.Screen.ShowSubtitle(
+                    "HUD pictures not found. Put the PinkUI folder in scripts (see scripts\\hud_log.txt)",
+                    6000);
         }
 
         UpdateNeeds(p, dt);
@@ -247,8 +300,8 @@ public class Hud : Script
     }
 
     // ===========================================================
-    //  Pictures are cut from the reference image (scripts\PinkUI\hud2).
-    //  All numbers below are pixels of that reference picture.
+    //  Pictures: scripts/PinkUI/hud/*.png
+    //  All numbers below are design pixels (1280x720).
     // ===========================================================
 
     // ---------- shared drawing ----------
@@ -260,7 +313,10 @@ public class Hud : Script
         foreach (float[] hl in holes)
             PR(x + hl[0], y + hl[1], hl[2], hl[3], 8, 12, 10, 255);
         if (!Spr(spr, x - m, y - m, w + 2f * m, h + 2f * m))
+        {
+            PR(x - 1.5f, y - 1.5f, w + 3f, h + 3f, 50, 230, 70, 255);
             PR(x, y, w, h, 8, 12, 10, 255);          // no PNG: plain box
+        }
     }
 
     // smooth horizontal bar (dark track + gradient fill + shine)
