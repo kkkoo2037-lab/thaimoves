@@ -23,7 +23,13 @@ public class DeathScreen : Script
     // you go down when your health falls to this % of the bar
     const float DOWN_AT_PERCENT = 0.25f;
 
-    // (REAL_DEATH only) try to stop the game's WASTED screen
+    // true  = NoWasted.asi is installed: IT removes the WASTED screen, so
+    //         this script must not touch the game's respawn at all
+    //         (two scripts fighting each other = glitchy death sound)
+    // false = no NoWasted: this script tries to stop WASTED itself
+    const bool NOWASTED_ASI = true;
+
+    // (only when NOWASTED_ASI = false) try to stop the game's WASTED screen
     const bool KILL_WASTED_SCREEN = true;
 
     // respawn point (Central Los Santos Medical Center)
@@ -220,7 +226,7 @@ public class DeathScreen : Script
     // ---------- Weapons / HUD ----------
     void KillRespawnScript(int now)
     {
-        if (!KILL_WASTED_SCREEN || now < nextKill) return;
+        if (NOWASTED_ASI || !KILL_WASTED_SCREEN || now < nextKill) return;
         nextKill = now + 500;
         Function.Call(Hash.TERMINATE_ALL_SCRIPTS_WITH_THIS_NAME,
             "respawn_controller");
@@ -271,6 +277,8 @@ public class DeathScreen : Script
         downStart = now;
         nextKill = 0;
         KillRespawnScript(now);
+        if (NOWASTED_ASI) return;   // NoWasted handles all of this
+
         // one time only: calling these every frame makes the
         // WASTED banner restart over and over
         Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, true);
