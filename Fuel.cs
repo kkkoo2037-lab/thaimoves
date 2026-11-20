@@ -139,12 +139,16 @@ public class FuelSys : Script
         blipsMade = true;
         foreach (Vector3 pos in Stations)
         {
-            Blip b = World.CreateBlip(pos);
-            b.Sprite = (BlipSprite)361;      // gas pump icon
-            b.Color = BlipColor.Green;
-            b.Scale = 0.8f;
-            b.IsShortRange = true;
-            b.Name = "Gas Station";
+            int b = Function.Call<int>(
+                Hash.ADD_BLIP_FOR_COORD, pos.X, pos.Y, pos.Z);
+            Function.Call(Hash.SET_BLIP_SPRITE, b, 361);     // gas pump
+            Function.Call(Hash.SET_BLIP_COLOUR, b, 2);       // green
+            Function.Call(Hash.SET_BLIP_SCALE, b, 0.8f);
+            Function.Call(Hash.SET_BLIP_AS_SHORT_RANGE, b, true);
+            Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
+            Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME,
+                "Gas Station");
+            Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, b);
         }
     }
 

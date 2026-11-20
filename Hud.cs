@@ -113,11 +113,6 @@ public class Hud : Script
     // PNG (always drawn on top of rects and text)
     bool Spr(string name, float x, float y, float w, float h)
     {
-        return SprA(name, x, y, w, h, 255);
-    }
-
-    bool SprA(string name, float x, float y, float w, float h, int alpha)
-    {
         if (sprOff) return false;
         try
         {
@@ -135,7 +130,6 @@ public class Hud : Script
             if (s == null) return false;
             s.Size = new System.Drawing.SizeF(w * DW / SW, h);
             s.Position = new System.Drawing.PointF(NX(x) * DW, y);
-            s.Color = System.Drawing.Color.FromArgb(alpha, 255, 255, 255);
             s.Draw();
             return true;
         }
