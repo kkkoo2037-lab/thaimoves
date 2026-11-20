@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using GTA;
 using GTA.Math;
 using GTA.Native;
@@ -11,14 +13,14 @@ public class DeathScreen : Script
 {
     // ===== Settings =====
     // 1800 = 30 minutes. Use a small number (e.g. 30) to test.
-    const int RESPAWN_SECONDS = 5;
+    static int RESPAWN_SECONDS = 5;
     const int UID = 256;
 
     // false = you "go down" (lying on the ground, can not die): there
     //         is no WASTED screen, nothing gets stripped.
     // true  = you really die (other scripts see a dead body), but the
     //         game's own WASTED banner may show on top of our screen.
-    const bool REAL_DEATH = true;
+    static bool REAL_DEATH = true;
 
     // you go down when your health falls to this % of the bar
     const float DOWN_AT_PERCENT = 0.25f;
@@ -27,10 +29,20 @@ public class DeathScreen : Script
     //         this script must not touch the game's respawn at all
     //         (two scripts fighting each other = glitchy death sound)
     // false = no NoWasted: this script tries to stop WASTED itself
-    const bool NOWASTED_ASI = true;
+    static bool NOWASTED_ASI = false;
 
     // (only when NOWASTED_ASI = false) try to stop the game's WASTED screen
-    const bool KILL_WASTED_SCREEN = true;
+    static bool KILL_WASTED_SCREEN = false;
+
+    // master switch (false = this script does nothing)
+    static bool ENABLED = true;
+
+    // stop the game's death audio scene while dead (try if the sound is bad)
+    static bool STOP_DEATH_AUDIO = true;
+
+    // call PAUSE_DEATH_ARREST_RESTART once when you die (keeps the game
+    // from starting its respawn over and over = the looping sound)
+    static bool PAUSE_RESTART = true;
 
     // respawn point (Central Los Santos Medical Center)
     static readonly Vector3 Hospital = new Vector3(341.0f, -1397.3f, 32.5f);
@@ -43,6 +55,8 @@ public class DeathScreen : Script
 
     bool dead;
     int nextKill;
+    int nextAudio;
+    int fxStop1, fxStop2;
     int nextSnap;
     Dictionary<uint, int> guns = new Dictionary<uint, int>();
     bool busy;                // fade / respawn in progress
@@ -50,7 +64,57 @@ public class DeathScreen : Script
 
     public DeathScreen()
     {
+        LoadCfg();
         Tick += OnTick;
+    }
+
+    // scripts\DeathScreen.ini overrides the settings above (no rebuild needed)
+    static void LoadCfg()
+    {
+        try
+        {
+            // try a few places (the game's folder layout may differ)
+            string[] tries = {
+                "scripts\\DeathScreen.ini", "scripts/DeathScreen.ini",
+                "DeathScreen.ini"
+            };
+            string path = null;
+            foreach (string t in tries)
+                if (File.Exists(t)) { path = t; break; }
+            if (path == null)
+            {
+                Log("DeathScreen.ini not found - using the settings inside the code"
+                    + " (real_death=" + REAL_DEATH + " nowasted=" + NOWASTED_ASI + ")");
+                return;
+            }
+            Log("settings read from " + path);
+            foreach (string raw in File.ReadAllLines(path))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line[0] == ';' || line[0] == '[') continue;
+                int eq = line.IndexOf('=');
+                if (eq < 0) continue;
+                string k = line.Substring(0, eq).Trim().ToLowerInvariant();
+                string v = line.Substring(eq + 1).Trim();
+                bool b = v == "1" || v.ToLowerInvariant() == "true";
+                int n;
+                switch (k)
+                {
+                    case "enabled": ENABLED = b; break;
+                    case "real_death": REAL_DEATH = b; break;
+                    case "nowasted_asi": NOWASTED_ASI = b; break;
+                    case "kill_wasted_screen": KILL_WASTED_SCREEN = b; break;
+                    case "stop_death_audio": STOP_DEATH_AUDIO = b; break;
+                    case "pause_restart": PAUSE_RESTART = b; break;
+                    case "respawn_seconds":
+                        if (int.TryParse(v, NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out n) && n > 0)
+                            RESPAWN_SECONDS = n;
+                        break;
+                }
+            }
+        }
+        catch (Exception) { }
     }
 
     // ---------- Helpers ----------
@@ -277,14 +341,39 @@ public class DeathScreen : Script
         downStart = now;
         nextKill = 0;
         KillRespawnScript(now);
-        if (NOWASTED_ASI) return;   // NoWasted handles all of this
+        Log("dead at " + now + " (nowasted=" + NOWASTED_ASI + ")");
+        if (PAUSE_RESTART)
+            Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, true);
+        if (NOWASTED_ASI) return;   // NoWasted handles the rest
 
-        // one time only: calling these every frame makes the
-        // WASTED banner restart over and over
+        // ONE time only (calling these every frame makes the WASTED
+        // banner / sound restart over and over)
         Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, true);
         Function.Call(Hash.IGNORE_NEXT_RESTART, true);
         Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
         Function.Call(Hash.SET_FADE_OUT_AFTER_ARREST, false);
+
+        // remove the grey WASTED screen effect twice, once each
+        fxStop1 = now + 800;
+        fxStop2 = now + 2500;
+    }
+
+    // scripts\DeathScreen.log - short notes for bug reports
+    static void Log(string t)
+    {
+        try
+        {
+            File.AppendAllText("scripts\\DeathScreen.log",
+                DateTime.Now.ToString("HH:mm:ss") + "  " + t + "\r\n");
+        }
+        catch (Exception) { }
+    }
+
+    static void StopDeathFx()
+    {
+        Function.Call(Hash.ANIMPOSTFX_STOP, "DeathFailOut");
+        Function.Call(Hash.ANIMPOSTFX_STOP, "DeathFailMPDark");
+        Function.Call(Hash.ANIMPOSTFX_STOP, "DeathFailMPIn");
     }
 
     void EndDead(Ped p)
@@ -294,6 +383,10 @@ public class DeathScreen : Script
         Protect(p, false);
         Function.Call(Hash.ANIMPOSTFX_STOP_ALL);
         Function.Call(Hash.CLEAR_TIMECYCLE_MODIFIER);
+        if (!NOWASTED_ASI || PAUSE_RESTART)
+            Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, false);
+        Log("alive again");
+        fxStop1 = fxStop2 = 0;
         if (Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT))
             Function.Call(Hash.DO_SCREEN_FADE_IN, 300);
         RestoreHud(p);
@@ -446,6 +539,7 @@ public class DeathScreen : Script
         Ped p = Game.Player.Character;
 
         if (p == null || !p.Exists()) return;
+        if (!ENABLED) return;
         if (busy) return;
 
         int now = Game.GameTime;
@@ -482,6 +576,18 @@ public class DeathScreen : Script
         {
             RespawnAtHospital(p);
             return;
+        }
+
+        if (!NOWASTED_ASI)
+        {
+            if (fxStop1 != 0 && now >= fxStop1) { fxStop1 = 0; StopDeathFx(); }
+            if (fxStop2 != 0 && now >= fxStop2) { fxStop2 = 0; StopDeathFx(); }
+        }
+
+        if (STOP_DEATH_AUDIO && now > nextAudio)
+        {
+            nextAudio = now + 300;
+            Function.Call(Hash.STOP_AUDIO_SCENE, "DEATH_SCENE");
         }
 
         DrawUi(remain, now);
