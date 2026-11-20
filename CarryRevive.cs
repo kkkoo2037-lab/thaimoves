@@ -445,7 +445,7 @@ public class CarryRevive : Script
         int now = Game.GameTime;
 
         // player died or got into a vehicle: let go
-        if (p.IsDead || p.IsInVehicle())
+        if (p.IsDead || DeathScreen.Downed || p.IsInVehicle())
         {
             if (carried != null) Drop(p);
             if (reviving) { reviving = false; target = null; }

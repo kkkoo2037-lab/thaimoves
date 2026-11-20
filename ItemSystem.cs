@@ -789,7 +789,7 @@ public class ItemSystem : Script
         bool kBS = Pressed(KBuySell);
         bool kQty = Pressed(KQty);
 
-        if (p == null || !p.Exists() || p.IsDead)
+        if (p == null || !p.Exists() || p.IsDead || DeathScreen.Downed)
         {
             mode = 0;
             return;
