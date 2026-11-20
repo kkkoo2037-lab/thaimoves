@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using GTA;
 using GTA.Math;
 using GTA.Native;
@@ -26,6 +27,9 @@ public class DeathScreen : Script
     public static bool Downed;
 
     bool dead;
+    int nextKill;
+    int nextSnap;
+    Dictionary<uint, int> guns = new Dictionary<uint, int>();
     bool busy;                // fade / respawn in progress
     int downStart;
 
@@ -119,18 +123,63 @@ public class DeathScreen : Script
         }
     }
 
+    // ---------- Weapons / HUD ----------
+    void KillRespawnScript(int now)
+    {
+        if (!KILL_WASTED_SCREEN || now < nextKill) return;
+        nextKill = now + 500;
+        Function.Call(Hash.TERMINATE_ALL_SCRIPTS_WITH_THIS_NAME,
+            "respawn_controller");
+    }
+
+    // remember the weapons while alive (death strips them)
+    void SnapshotWeapons(Ped p, int now)
+    {
+        if (now < nextSnap) return;
+        nextSnap = now + 1000;
+        Dictionary<uint, int> d = new Dictionary<uint, int>();
+        foreach (WeaponHash h in Enum.GetValues(typeof(WeaponHash)))
+        {
+            uint hash = (uint)h;
+            if (d.ContainsKey(hash)) continue;
+            if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, p, hash, false))
+                d[hash] = Function.Call<int>(
+                    Hash.GET_AMMO_IN_PED_WEAPON, p, hash);
+        }
+        if (d.Count > 0) guns = d;
+    }
+
+    void RestoreWeapons(Ped p)
+    {
+        foreach (KeyValuePair<uint, int> kv in guns)
+        {
+            if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON,
+                p, kv.Key, false)) continue;
+            Function.Call(Hash.GIVE_WEAPON_TO_PED, p, kv.Key,
+                Math.Max(kv.Value, 1), false, false);
+        }
+    }
+
+    void RestoreHud(Ped p)
+    {
+        Function.Call(Hash.DISPLAY_RADAR, true);
+        Function.Call(Hash.DISPLAY_HUD, true);
+        Function.Call(Hash.SET_PLAYER_CONTROL,
+            Game.Player.Handle, true, 0);
+        RestoreWeapons(p);
+    }
+
     // ---------- Dead / alive ----------
     void GoDead(int now)
     {
         dead = true;
         Downed = true;
         downStart = now;
-        if (KILL_WASTED_SCREEN)
-            Function.Call(Hash.TERMINATE_ALL_SCRIPTS_WITH_THIS_NAME,
-                "respawn_controller");
+        nextKill = 0;
+        KillRespawnScript(now);
     }
 
-    void EndDead()
+    void EndDead(Ped p)
     {
         dead = false;
         Downed = false;
@@ -138,6 +187,7 @@ public class DeathScreen : Script
         Function.Call(Hash.CLEAR_TIMECYCLE_MODIFIER);
         if (Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT))
             Function.Call(Hash.DO_SCREEN_FADE_IN, 300);
+        RestoreHud(p);
     }
 
     void RespawnAtHospital(Ped p)
@@ -160,7 +210,7 @@ public class DeathScreen : Script
         p.Health = p.MaxHealth;
         Function.Call(Hash.CLEAR_AREA_OF_PEDS,
             Hospital.X, Hospital.Y, Hospital.Z, 3f, 0);
-        EndDead();
+        EndDead(p);
 
         Script.Wait(400);
         Function.Call(Hash.DO_SCREEN_FADE_IN, 900);
@@ -296,16 +346,24 @@ public class DeathScreen : Script
         Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
         Function.Call(Hash.SET_FADE_OUT_AFTER_ARREST, false);
 
+        // kill the game's respawn script BEFORE we can die, so there
+        // is no WASTED banner at all
+        KillRespawnScript(now);
+
         if (!dead)
         {
-            if (!p.IsDead) return;
+            if (!p.IsDead)
+            {
+                SnapshotWeapons(p, now);
+                return;
+            }
             GoDead(now);
         }
 
         // someone revived us (CarryRevive resurrects the body)
         if (!p.IsDead)
         {
-            EndDead();
+            EndDead(p);
             Msg("You were revived");
             return;
         }
