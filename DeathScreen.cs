@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using GTA;
 using GTA.Math;
 using GTA.Native;
@@ -11,14 +13,14 @@ public class DeathScreen : Script
 {
     // ===== Settings =====
     // 1800 = 30 minutes. Use a small number (e.g. 30) to test.
-    const int RESPAWN_SECONDS = 5;
+    static int RESPAWN_SECONDS = 5;
     const int UID = 256;
 
     // false = you "go down" (lying on the ground, can not die): there
     //         is no WASTED screen, nothing gets stripped.
     // true  = you really die (other scripts see a dead body), but the
     //         game's own WASTED banner may show on top of our screen.
-    const bool REAL_DEATH = true;
+    static bool REAL_DEATH = true;
 
     // you go down when your health falls to this % of the bar
     const float DOWN_AT_PERCENT = 0.25f;
@@ -27,10 +29,16 @@ public class DeathScreen : Script
     //         this script must not touch the game's respawn at all
     //         (two scripts fighting each other = glitchy death sound)
     // false = no NoWasted: this script tries to stop WASTED itself
-    const bool NOWASTED_ASI = true;
+    static bool NOWASTED_ASI = true;
 
     // (only when NOWASTED_ASI = false) try to stop the game's WASTED screen
-    const bool KILL_WASTED_SCREEN = true;
+    static bool KILL_WASTED_SCREEN = true;
+
+    // master switch (false = this script does nothing)
+    static bool ENABLED = true;
+
+    // stop the game's death audio scene while dead (try if the sound is bad)
+    static bool STOP_DEATH_AUDIO = false;
 
     // respawn point (Central Los Santos Medical Center)
     static readonly Vector3 Hospital = new Vector3(341.0f, -1397.3f, 32.5f);
@@ -43,6 +51,7 @@ public class DeathScreen : Script
 
     bool dead;
     int nextKill;
+    int nextAudio;
     int nextSnap;
     Dictionary<uint, int> guns = new Dictionary<uint, int>();
     bool busy;                // fade / respawn in progress
@@ -50,7 +59,43 @@ public class DeathScreen : Script
 
     public DeathScreen()
     {
+        LoadCfg();
         Tick += OnTick;
+    }
+
+    // scripts\DeathScreen.ini overrides the settings above (no rebuild needed)
+    static void LoadCfg()
+    {
+        try
+        {
+            string path = "scripts\\DeathScreen.ini";
+            if (!File.Exists(path)) return;
+            foreach (string raw in File.ReadAllLines(path))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line[0] == ';' || line[0] == '[') continue;
+                int eq = line.IndexOf('=');
+                if (eq < 0) continue;
+                string k = line.Substring(0, eq).Trim().ToLowerInvariant();
+                string v = line.Substring(eq + 1).Trim();
+                bool b = v == "1" || v.ToLowerInvariant() == "true";
+                int n;
+                switch (k)
+                {
+                    case "enabled": ENABLED = b; break;
+                    case "real_death": REAL_DEATH = b; break;
+                    case "nowasted_asi": NOWASTED_ASI = b; break;
+                    case "kill_wasted_screen": KILL_WASTED_SCREEN = b; break;
+                    case "stop_death_audio": STOP_DEATH_AUDIO = b; break;
+                    case "respawn_seconds":
+                        if (int.TryParse(v, NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out n) && n > 0)
+                            RESPAWN_SECONDS = n;
+                        break;
+                }
+            }
+        }
+        catch (Exception) { }
     }
 
     // ---------- Helpers ----------
@@ -446,6 +491,7 @@ public class DeathScreen : Script
         Ped p = Game.Player.Character;
 
         if (p == null || !p.Exists()) return;
+        if (!ENABLED) return;
         if (busy) return;
 
         int now = Game.GameTime;
@@ -482,6 +528,12 @@ public class DeathScreen : Script
         {
             RespawnAtHospital(p);
             return;
+        }
+
+        if (STOP_DEATH_AUDIO && now > nextAudio)
+        {
+            nextAudio = now + 300;
+            Function.Call(Hash.STOP_AUDIO_SCENE, "DEATH_SCENE");
         }
 
         DrawUi(remain, now);
