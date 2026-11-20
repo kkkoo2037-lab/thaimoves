@@ -26,6 +26,8 @@ public class ThaiMoves : Script
     // ================= Slide (anim 2) =================
     float SlideSpeed = 12f;
     int SlideTime = 900;
+    float SlideEndSpeed = 5f;  // speed at the end of the slide (smooth hand-off to running)
+    int SlideBlendMs = 350;    // last N ms: player regains control, slide fades into run
     float SideDrift = 0.3f;   // + right, - left, 0 straight
     string SlideDict = "missheistfbi3b_ig6_v2";
     string SlideClip = "rubble_slide_franklin";
@@ -303,20 +305,33 @@ public class ThaiMoves : Script
         // ---------- While sliding ----------
         if (slideEnd > now)
         {
-            Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 21, true);
-            Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 30, true);
-            Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 31, true);
+            int left = slideEnd - now;
+            bool blending = left < SlideBlendMs;
 
-            float frac = (slideEnd - now) / (float)SlideTime;
-            float power = frac * frac;
-            Vector3 vel = slideDir * (SlideSpeed * power);
-            vel.Z = p.Velocity.Z;
-            p.Velocity = vel;
+            // main phase: lock controls. Last phase: give control back so the
+            // player runs out of the slide instead of stopping dead.
+            if (!blending)
+            {
+                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 21, true);
+                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 30, true);
+                Function.Call(Hash.DISABLE_CONTROL_ACTION, 0, 31, true);
+
+                // ease down from SlideSpeed to SlideEndSpeed (never to 0)
+                float span = SlideTime - SlideBlendMs;
+                float frac = (left - SlideBlendMs) / span;   // 1 -> 0
+                if (frac < 0f) frac = 0f;
+                float ease = frac * frac * (3f - 2f * frac); // smoothstep
+                float spd = SlideEndSpeed + (SlideSpeed - SlideEndSpeed) * ease;
+                Vector3 vel = slideDir * spd;
+                vel.Z = p.Velocity.Z;
+                p.Velocity = vel;
+            }
         }
         else if (slideEnd != 0)
         {
             slideEnd = 0;
-            p.Task.ClearAll();
+            // do NOT ClearAll (that causes the hard stop); fade the anim out
+            Function.Call(Hash.STOP_ANIM_TASK, p, SlideDict, SlideClip, -1.5f);
         }
     }
 
@@ -398,7 +413,7 @@ public class ThaiMoves : Script
 
         if (Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, SlideDict))
             Function.Call(Hash.TASK_PLAY_ANIM, p, SlideDict,
-                SlideClip, 50f, -8f, SlideTime, 0, 0f,
+                SlideClip, 8f, -1.5f, SlideTime, 0, 0f,
                 false, false, false);
     }
 }
