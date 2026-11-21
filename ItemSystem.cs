@@ -16,8 +16,10 @@ public static class Inv
     public const int Burger = 4;
     public const int Energy = 5;
     public const int Revive = 6;
+    public const int Money = 7;       // always in the bag, = the game's money
+    public const int RepairBox = 8;
 
-    public static int[] Qty = new int[7];
+    public static int[] Qty = new int[9];
     public static bool Dirty;
     public static bool WantBandage;
     public static bool WantArmor;
@@ -52,7 +54,8 @@ public class ItemSystem : Script
 
     static readonly string[] Names = {
         "Bandage", "Body Armor", "Medkit",
-        "Water", "Burger", "Energy Drink", "Revive Kit"
+        "Water", "Burger", "Energy Drink", "Revive Kit",
+        "Money", "Repair Box"
     };
     static readonly string[] Desc = {
         "Heals 60 HP over time (L3 / H)",
@@ -61,16 +64,22 @@ public class ItemSystem : Script
         "Restores stamina and a little food, +5 HP",
         "Restores 35 food and 25 HP",
         "Adds 30% to the stamina bar",
-        "Revives a dead person (CPR 10s)"
+        "Revives a dead person (CPR 10s)",
+        "Your money (same as the game money)",
+        "Repairs a car (stand in front of the hood)"
     };
-    static readonly int[] Cat = { 1, 2, 1, 3, 3, 3, 1 };
+    static readonly int[] Cat = { 1, 2, 1, 3, 3, 3, 1, 4, 4 };
     static readonly string[] CatNames = {
-        "ALL", "MEDICAL", "ARMOR", "FOOD"
+        "ALL", "MEDICAL", "ARMOR", "FOOD", "MISC"
     };
-    static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60, 1000 };
-    static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20, 300 };
+    static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60, 1000, 0, 800 };
+    static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20, 300, 0, 300 };
+    // money can not be bought; only cheap / unimportant things can be thrown away
+    static readonly bool[] Shoppable = { true, true, true, true, true, true, true, false, true };
+    static readonly bool[] Droppable = { false, false, false, true, true, true, false, false, false };
+    const int GiveMoneyStep = 500;     // $ given with the 'Give' button
     static readonly int[] QtyOptions = { 1, 5, 10 };
-    static readonly float[] Weight = { 0.5f, 3.0f, 1.5f, 0.5f, 0.4f, 0.4f, 1.0f };
+    static readonly float[] Weight = { 0.5f, 3.0f, 1.5f, 0.5f, 0.4f, 0.4f, 1.0f, 0f, 2.0f };
     const float MaxWeight = 50f;
 
     static float TotalWeight()
@@ -166,6 +175,30 @@ public class ItemSystem : Script
             "....RR....",
             ".........."
         },
+        new string[] {   // money
+            "..........",
+            "EEEEEEEEEE",
+            "EWWEEEEWWE",
+            "EWEEWWEEWE",
+            "EEEEWWEEEE",
+            "EEEEWWEEEE",
+            "EWEEWWEEWE",
+            "EWWEEEEWWE",
+            "EEEEEEEEEE",
+            ".........."
+        },
+        new string[] {   // repair box
+            "...GGGG...",
+            "..G....G..",
+            "..G....G..",
+            "RRRRRRRRRR",
+            "RRRRRRRRRR",
+            "GGRRWWRRGG",
+            "RRRWRRWRRR",
+            "RRRRRRRRRR",
+            "RRRRRRRRRR",
+            ".........."
+        },
     };
 
     static readonly Vector3[] Shops = {
@@ -199,6 +232,8 @@ public class ItemSystem : Script
     int boostEnd;
     int nextSave;
     List<int> vis = new List<int>();
+    bool actionMenu;   // Use / Give / Drop popup
+    int actIdx;
 
     public ItemSystem()
     {
@@ -395,6 +430,186 @@ public class ItemSystem : Script
                 PlayAnim(p, "mp_player_intdrink", "loop_bottle", 1800);
             Msg("Energy Drink: +30% stamina");
         }
+        else if (id == Inv.RepairBox)
+        {
+            TryRepair(p);
+        }
+    }
+
+    // ---------- Use / Give / Drop ----------
+    void DoAction(Ped p, int id, int idx)
+    {
+        actionMenu = false;
+        if (idx == 0)
+        {
+            if (id == Inv.Money) Msg("Money can not be used");
+            else UseItem(p, id);
+        }
+        else if (idx == 1) GiveItem(p, id);
+        else DropItem(p, id);
+    }
+
+    void GiveItem(Ped p, int id)
+    {
+        if (id == Inv.Money)
+        {
+            if (Game.Player.Money < GiveMoneyStep)
+            {
+                Msg("Not enough money");
+                return;
+            }
+        }
+        else if (Inv.Qty[id] <= 0)
+        {
+            Msg("You don't have this item");
+            return;
+        }
+
+        Ped target = null;
+        float best = 999f;
+        foreach (Ped o in World.GetNearbyPeds(p, 3.5f))
+        {
+            if (o == null || !o.Exists() || o.IsDead || o.IsInVehicle()) continue;
+            float d = o.Position.DistanceTo(p.Position);
+            if (d < best) { best = d; target = o; }
+        }
+        if (target == null)
+        {
+            Msg("No one nearby");
+            return;
+        }
+
+        if (id == Inv.Money)
+        {
+            Game.Player.Money = Game.Player.Money - GiveMoneyStep;
+            Msg("Gave $" + GiveMoneyStep);
+        }
+        else
+        {
+            Inv.Take(id);
+            Msg("Gave 1 x " + Names[id]);
+        }
+        mode = 0;
+        PlayAnim(p, "mp_common", "givetake1_a", 1500);
+        Function.Call(Hash.TASK_PLAY_ANIM, target, "mp_common", "givetake1_b",
+            8f, -8f, 1500, 49, 0f, false, false, false);
+    }
+
+    void DropItem(Ped p, int id)
+    {
+        if (!Droppable[id])
+        {
+            Msg("You can not throw this away");
+            return;
+        }
+        if (!Inv.Take(id))
+        {
+            Msg("You don't have this item");
+            return;
+        }
+        Msg("Dropped 1 x " + Names[id]);
+        mode = 0;
+        if (!p.IsInVehicle())
+            PlayAnim(p, "pickup_object", "pickup_low", 1200);
+    }
+
+    // ---------- Repair box ----------
+    static void ModelBox(Vehicle v, out Vector3 min, out Vector3 max)
+    {
+        OutputArgument a = new OutputArgument();
+        OutputArgument b = new OutputArgument();
+        Function.Call(Hash.GET_MODEL_DIMENSIONS, v.Model.Hash, a, b);
+        min = a.GetResult<Vector3>();
+        max = b.GetResult<Vector3>();
+    }
+
+    // a car whose hood (front) is right in front of the player
+    Vehicle FindHoodVehicle(Ped p)
+    {
+        Vehicle best = null;
+        float bestD = 999f;
+        Vector3 pos = p.Position;
+        foreach (Vehicle v in World.GetNearbyVehicles(p, 8f))
+        {
+            if (v == null || !v.Exists()) continue;
+            Vector3 mn, mx;
+            ModelBox(v, out mn, out mx);
+            Vector3 loc = Function.Call<Vector3>(
+                Hash.GET_OFFSET_FROM_ENTITY_GIVEN_WORLD_COORDS,
+                v, pos.X, pos.Y, pos.Z);
+            if (loc.Y < mx.Y - 0.4f || loc.Y > mx.Y + 2.6f) continue;
+            if (Math.Abs(loc.X) > (mx.X - mn.X) / 2f + 0.8f) continue;
+            float d = Math.Abs(loc.Y - mx.Y) + Math.Abs(loc.X);
+            if (d < bestD) { bestD = d; best = v; }
+        }
+        return best;
+    }
+
+    void TryRepair(Ped p)
+    {
+        if (p.IsInVehicle())
+        {
+            Msg("Get out of the car first");
+            return;
+        }
+        Vehicle v = FindHoodVehicle(p);
+        if (v == null)
+        {
+            Msg("Stand in front of the car's hood");
+            return;
+        }
+
+        mode = 0;
+        actionMenu = false;
+        const int T = 6000;
+
+        Function.Call(Hash.SET_VEHICLE_DOOR_OPEN, v, 4, false, false);
+        Vector3 d = v.Position - p.Position;
+        p.Heading = (float)(Math.Atan2(-d.X, d.Y) * 180.0 / Math.PI);
+        PlayAnim(p, "mini@repair", "fixing_a_ped", T);
+
+        int start = Game.GameTime;
+        bool ok = true;
+        while (Game.GameTime - start < T)
+        {
+            Function.Call(Hash.DISABLE_ALL_CONTROL_ACTIONS, 0);
+            if (Pressed(KBack) || p.IsDead || p.Position.DistanceTo(v.Position) > 7f)
+            {
+                ok = false;
+                break;
+            }
+            DrawProgress((Game.GameTime - start) / (float)T);
+            Script.Yield();
+        }
+
+        p.Task.ClearAll();
+        Function.Call(Hash.SET_VEHICLE_DOOR_SHUT, v, 4, false);
+        if (!ok)
+        {
+            Msg("Repair cancelled");
+            return;
+        }
+
+        Inv.Take(Inv.RepairBox);
+        Function.Call(Hash.SET_VEHICLE_FIXED, v);
+        Function.Call(Hash.SET_VEHICLE_DEFORMATION_FIXED, v);
+        Function.Call(Hash.SET_VEHICLE_ENGINE_HEALTH, v, 1000f);
+        Function.Call(Hash.SET_VEHICLE_PETROL_TANK_HEALTH, v, 1000f);
+        for (int i = 0; i < 8; i++)
+            Function.Call(Hash.SET_VEHICLE_TYRE_FIXED, v, i);
+        Msg("Vehicle repaired");
+    }
+
+    void DrawProgress(float f)
+    {
+        float w = 300f, x = 640f - w / 2f, y = 590f;
+        PR(x - 1.5f, y - 1.5f, w + 3f, 17f, 50, 230, 70, 255);
+        PR(x, y, w, 14f, 7, 20, 11, 255);
+        PR(x, y, w * f, 14f, 70, 235, 90, 255);
+        PR(x, y, w * f, 4f, 170, 255, 190, 255);
+        if (!Lbl("x_repair", 640f, y - 28f, 1))
+            PT("REPAIRING...", 640f, y - 26f, 0.4f, 255, 255, 255, 1);
+        Lbl("x_cancel", 640f, y + 20f, 1);
     }
 
     // ---------- Shop ----------
@@ -442,6 +657,13 @@ public class ItemSystem : Script
         for (int id = 0; id < Names.Length; id++)
         {
             if (catSel != 0 && Cat[id] != catSel) continue;
+            if (id == Inv.Money)
+            {
+                if (mode != 1) continue;          // only in the bag, never in the shop
+                vis.Add(id);
+                continue;
+            }
+            if (mode == 2 && !sellMode && !Shoppable[id]) continue;
             bool needOwned = (mode == 1) || (mode == 2 && sellMode);
             if (needOwned && Inv.Qty[id] <= 0) continue;
             vis.Add(id);
@@ -597,6 +819,66 @@ public class ItemSystem : Script
         }
     }
 
+    // generated: label picture sizes (design px)
+    static readonly Dictionary<string, float[]> LblSize = new Dictionary<string, float[]> {
+        { "t_bag", new float[] { 88f, 38f } },
+        { "t_shop", new float[] { 82f, 38f } },
+        { "s_bag", new float[] { 181f, 17f } },
+        { "s_shop", new float[] { 119f, 17f } },
+        { "c_0", new float[] { 48f, 20f } },
+        { "c_1", new float[] { 93f, 20f } },
+        { "c_2", new float[] { 40f, 20f } },
+        { "c_3", new float[] { 114f, 20f } },
+        { "c_4", new float[] { 38f, 20f } },
+        { "n_0", new float[] { 69f, 22f } },
+        { "n_1", new float[] { 66f, 22f } },
+        { "n_2", new float[] { 56f, 22f } },
+        { "n_3", new float[] { 55f, 22f } },
+        { "n_4", new float[] { 67f, 22f } },
+        { "n_5", new float[] { 74f, 22f } },
+        { "n_6", new float[] { 77f, 22f } },
+        { "n_7", new float[] { 27f, 22f } },
+        { "n_8", new float[] { 85f, 22f } },
+        { "d_0", new float[] { 106f, 16f } },
+        { "d_1", new float[] { 64f, 16f } },
+        { "d_2", new float[] { 98f, 16f } },
+        { "d_3", new float[] { 162f, 16f } },
+        { "d_4", new float[] { 134f, 16f } },
+        { "d_5", new float[] { 94f, 16f } },
+        { "d_6", new float[] { 161f, 16f } },
+        { "d_7", new float[] { 151f, 16f } },
+        { "d_8", new float[] { 151f, 16f } },
+        { "a_use", new float[] { 48f, 22f } },
+        { "a_give", new float[] { 21f, 22f } },
+        { "a_drop", new float[] { 21f, 22f } },
+        { "a_title", new float[] { 85f, 17f } },
+        { "h_bag", new float[] { 172f, 16f } },
+        { "h_act", new float[] { 154f, 16f } },
+        { "a_use_d", new float[] { 48f, 22f } },
+        { "a_give_d", new float[] { 21f, 22f } },
+        { "a_drop_d", new float[] { 21f, 22f } },
+        { "x_repair", new float[] { 103f, 23f } },
+        { "x_cancel", new float[] { 127f, 16f } },
+        { "h_shop", new float[] { 351f, 16f } },
+        { "b_buy", new float[] { 22f, 20f } },
+        { "b_sell", new float[] { 30f, 20f } },
+        { "m_buy", new float[] { 24f, 22f } },
+        { "m_sell", new float[] { 32f, 22f } },
+        { "l_owned", new float[] { 12f, 17f } },
+        { "l_qty", new float[] { 41f, 17f } },
+        { "m_nobuy", new float[] { 91f, 17f } },
+    };
+    const string LBLDIR = "scripts\\PinkUI\\lbl\\";
+
+    // Thai text picture. align 0 left, 1 centre, 2 right. y = top of picture
+    bool Lbl(string name, float x, float y, int align)
+    {
+        float[] sz;
+        if (!LblSize.TryGetValue(name, out sz)) return false;
+        float lx = align == 1 ? x - sz[0] / 2f : (align == 2 ? x - sz[0] : x);
+        return Sprite(LBLDIR + name + ".png", lx, y, sz[0], sz[1]);
+    }
+
     void Sidebar(float x, float y)
     {
         for (int i = 0; i < CatNames.Length; i++)
@@ -609,7 +891,8 @@ public class ItemSystem : Script
                 Frame("cat_dim.png", x + 10f, sy, 116f, 38f, 4f, 0f, 30, 110, 50);
             else
                 Frame("cat_off.png", x + 10f, sy, 116f, 38f, 4f, 0f, 16, 34, 20);
-            PT(CatNames[i], x + 24f, sy + 8f, 0.34f, 255, 255, 255, 0);
+            if (!Lbl("c_" + i, x + 18f, sy + 8f, 0))
+                PT(CatNames[i], x + 24f, sy + 8f, 0.34f, 255, 255, 255, 0);
         }
     }
 
@@ -637,9 +920,11 @@ public class ItemSystem : Script
     {
         float bx = 320f, by = 110f, bw = 640f, bh = 500f;
         Panel("panel_bag.png", bx, by, bw, bh);
-        PT("BAG", bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
-        PT("Check the items in your bag", bx + 76f, by + 38f, 0.3f,
-            160, 255, 175, 0);
+        if (!Lbl("t_bag", bx + 76f, by + 3f, 0))
+            PT("BAG", bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
+        if (!Lbl("s_bag", bx + 76f, by + 40f, 0))
+            PT("Check the items in your bag", bx + 76f, by + 38f, 0.3f,
+                160, 255, 175, 0);
         Frame("pill.png", bx + bw - 190f, by + 16f, 170f, 32f,
             3f, 0f, 16, 56, 26);
         PT(string.Format("{0:0.0} / {1:0} KG", TotalWeight(), MaxWeight),
@@ -663,24 +948,67 @@ public class ItemSystem : Script
             if (on) Frame("tile_sel.png", tx, ty, 150f, 170f, 4f, 8f, 22, 66, 30);
             else Frame("tile.png", tx, ty, 150f, 170f, 4f, 8f, 14, 32, 18);
 
-            Frame("qty.png", tx + 98f, ty + 8f, 44f, 20f, 3f, 0f, 20, 90, 36);
-            PT("x" + Inv.Qty[id], tx + 138f, ty + 9f, 0.3f, 255, 255, 255, 2);
+            if (id == Inv.Money)
+            {
+                // money = the game's money
+                Frame("qty.png", tx + 38f, ty + 8f, 104f, 20f, 3f, 0f, 20, 90, 36);
+                PT("$" + Game.Player.Money.ToString("N0"), tx + 138f, ty + 9f,
+                    0.3f, 255, 215, 90, 2);
+            }
+            else
+            {
+                Frame("qty.png", tx + 98f, ty + 8f, 44f, 20f, 3f, 0f, 20, 90, 36);
+                PT("x" + Inv.Qty[id], tx + 138f, ty + 9f, 0.3f, 255, 255, 255, 2);
+            }
 
             Spr("pad.png", tx + 14f, ty + 94f, 122f, 28f);
             Icon(id, tx + 75f, ty + 64f, 100f);
-            PT(Names[id], tx + 75f, ty + 130f, 0.36f, 240, 240, 245, 1);
+            if (!Lbl("n_" + id, tx + 75f, ty + 123f, 1))
+                PT(Names[id], tx + 75f, ty + 130f, 0.36f, 240, 240, 245, 1);
         }
 
         if (vis.Count > 0)
         {
             int id = vis[sel];
-            PT(Names[id] + " - " + Desc[id],
-                bx + 140f, by + bh - 62f, 0.34f, 160, 255, 175, 0);
+            if (!Lbl("d_" + id, bx + 140f, by + bh - 68f, 0))
+                PT(Names[id] + " - " + Desc[id],
+                    bx + 140f, by + bh - 62f, 0.34f, 160, 255, 175, 0);
         }
-        PT("ENTER Use    TAB Category    I Close",
-            bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
+        if (!Lbl("h_bag", bx + 20f, by + bh - 36f, 0))
+            PT("ENTER Use    TAB Category    I Close",
+                bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
         PT("HP " + p.Health + "   ARMOR " + p.Armor,
             bx + bw - 100f, by + bh - 30f, 0.3f, 255, 255, 255, 2);
+
+        if (actionMenu && vis.Count > 0) DrawActionMenu(bx, by, vis[sel]);
+    }
+
+    // popup made only of pictures (so nothing shows through it)
+    void DrawActionMenu(float bx, float by, int id)
+    {
+        float px = bx + 377f - 95f, py = by + 110f;
+        if (!Spr("pop_panel.png", px - 8f, py - 8f, 206f, 206f))
+        {
+            PR(px - 2f, py - 2f, 194f, 194f, 50, 230, 70, 255);
+            PR(px, py, 190f, 190f, 10, 24, 14, 255);
+        }
+        if (!Lbl("a_title", px + 95f, py + 12f, 1))
+            PT("CHOOSE", px + 95f, py + 10f, 0.36f, 160, 255, 175, 1);
+
+        bool[] en = { id != Inv.Money, true, Droppable[id] };
+        string[] key = { "a_use", "a_give", "a_drop" };
+        string[] eng = { "USE", "GIVE", "DROP" };
+        for (int i = 0; i < 3; i++)
+        {
+            float ry = py + 40f + i * 44f;
+            string f = !en[i] ? "act_dis.png" : (i == actIdx ? "act_on.png" : "act_off.png");
+            if (!Spr(f, px + 20f, ry, 150f, 34f))
+                PR(px + 20f, ry, 150f, 34f, en[i] ? (i == actIdx ? 70 : 20) : 25,
+                    en[i] ? (i == actIdx ? 235 : 60) : 30, en[i] ? 90 : 28, 255);
+            if (!Lbl(en[i] ? key[i] : key[i] + "_d", px + 95f, ry + 5f, 1))
+                PT(eng[i], px + 95f, ry + 6f, 0.4f, 255, 255, 255, 1);
+        }
+        Lbl("h_act", px + 95f, py + 172f, 1);
     }
 
     // ---------------- SHOP: list with buy buttons ----------------
@@ -689,8 +1017,10 @@ public class ItemSystem : Script
         float bx = 260f, by = 95f, bw = 760f, bh = 530f;
         int q = QtyOptions[qtyIdx];
         Panel("panel_shop.png", bx, by, bw, bh);
-        PT("SHOP", bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
-        PT("Buy and sell items", bx + 76f, by + 38f, 0.3f, 160, 255, 175, 0);
+        if (!Lbl("t_shop", bx + 76f, by + 3f, 0))
+            PT("SHOP", bx + 76f, by + 6f, 0.6f, 255, 255, 255, 0);
+        if (!Lbl("s_shop", bx + 76f, by + 40f, 0))
+            PT("Buy and sell items", bx + 76f, by + 38f, 0.3f, 160, 255, 175, 0);
         Frame("pill.png", bx + bw - 190f, by + 16f, 170f, 32f,
             3f, 0f, 16, 56, 26);
         PT("$" + Game.Player.Money.ToString("N0"),
@@ -700,11 +1030,14 @@ public class ItemSystem : Script
         float ty0 = by + 78f;
         if (!sellMode) Frame("seg_on.png", bx + 140f, ty0, 90f, 30f, 3f, 0f, 70, 235, 90);
         else Frame("seg_off.png", bx + 140f, ty0, 90f, 30f, 3f, 0f, 16, 34, 20);
-        PT("BUY", bx + 185f, ty0 + 5f, 0.36f, 255, 255, 255, 1);
+        if (!Lbl("m_buy", bx + 185f, ty0 + 3f, 1))
+            PT("BUY", bx + 185f, ty0 + 5f, 0.36f, 255, 255, 255, 1);
         if (sellMode) Frame("seg_on.png", bx + 236f, ty0, 90f, 30f, 3f, 0f, 70, 235, 90);
         else Frame("seg_off.png", bx + 236f, ty0, 90f, 30f, 3f, 0f, 16, 34, 20);
-        PT("SELL", bx + 281f, ty0 + 5f, 0.36f, 255, 255, 255, 1);
-        PT("QTY", bx + bw - 232f, ty0 + 6f, 0.32f, 160, 255, 175, 2);
+        if (!Lbl("m_sell", bx + 281f, ty0 + 3f, 1))
+            PT("SELL", bx + 281f, ty0 + 5f, 0.36f, 255, 255, 255, 1);
+        if (!Lbl("l_qty", bx + bw - 232f, ty0 + 6f, 2))
+            PT("QTY", bx + bw - 232f, ty0 + 6f, 0.32f, 160, 255, 175, 2);
         for (int k = 0; k < QtyOptions.Length; k++)
         {
             float qx = bx + bw - 220f + k * 62f;
@@ -731,20 +1064,25 @@ public class ItemSystem : Script
             else Frame("row.png", rx, ry, 600f, 60f, 4f, 8f, 14, 32, 18);
 
             Icon(id, rx + 38f, ry + 30f, 52f);
-            PT(Names[id], rx + 76f, ry + 6f, 0.4f, 255, 255, 255, 0);
-            PT(Desc[id], rx + 76f, ry + 33f, 0.26f, 140, 200, 150, 0);
-            PT("Owned x" + Inv.Qty[id], rx + 400f, ry + 20f, 0.32f,
+            if (!Lbl("n_" + id, rx + 76f, ry + 3f, 0))
+                PT(Names[id], rx + 76f, ry + 6f, 0.4f, 255, 255, 255, 0);
+            if (!Lbl("d_" + id, rx + 76f, ry + 31f, 0))
+                PT(Desc[id], rx + 76f, ry + 33f, 0.26f, 140, 200, 150, 0);
+            Lbl("l_owned", rx + 366f, ry + 18f, 2);
+            PT("x" + Inv.Qty[id], rx + 400f, ry + 20f, 0.32f,
                 160, 255, 175, 2);
             int price = (sellMode ? SellPrice[id] : BuyPrice[id]) * q;
             PT("$" + price, rx + 495f, ry + 17f, 0.4f, 255, 200, 60, 2);
             if (on) Frame("btn_s.png", rx + 506f, ry + 16f, 80f, 28f, 3f, 0f, 70, 235, 90);
             else Frame("btn_s_dim.png", rx + 506f, ry + 16f, 80f, 28f, 3f, 0f, 30, 120, 52);
-            PT(sellMode ? "SELL" : "BUY", rx + 546f, ry + 19f, 0.34f,
-                255, 255, 255, 1);
+            if (!Lbl(sellMode ? "b_sell" : "b_buy", rx + 546f, ry + 18f, 1))
+                PT(sellMode ? "SELL" : "BUY", rx + 546f, ry + 19f, 0.34f,
+                    255, 255, 255, 1);
         }
 
-        PT("T Buy/Sell   Q Qty   TAB Category   ENTER Confirm   BACKSPACE Close",
-            bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
+        if (!Lbl("h_shop", bx + 20f, by + bh - 36f, 0))
+            PT("T Buy/Sell   Q Qty   TAB Category   ENTER Confirm   BACKSPACE Close",
+                bx + 20f, by + bh - 30f, 0.3f, 200, 200, 205, 0);
         PT("HP " + p.Health + "   ARMOR " + p.Armor,
             bx + bw - 100f, by + bh - 30f, 0.3f, 255, 255, 255, 2);
     }
@@ -773,6 +1111,7 @@ public class ItemSystem : Script
         focus = 1;
         sellMode = false;
         qtyIdx = 0;
+        actionMenu = false;
     }
 
     void Tick2()
@@ -874,6 +1213,21 @@ public class ItemSystem : Script
         BuildVisible();
         int cols = (mode == 2) ? 1 : BCols;
         bool enterUse = enter;
+
+        // Use / Give / Drop popup
+        if (actionMenu)
+        {
+            if (mode != 1 || vis.Count == 0) actionMenu = false;
+            else
+            {
+                if (up) actIdx = (actIdx + 2) % 3;
+                if (down) actIdx = (actIdx + 1) % 3;
+                if (back) actionMenu = false;
+                else if (enter) DoAction(p, vis[sel], actIdx);
+                if (mode != 0) DrawUi(p);
+                return;
+            }
+        }
         if (focus == 0)
         {
             // category list: Up/Down changes category
@@ -932,7 +1286,11 @@ public class ItemSystem : Script
             if (vis.Count > 0)
             {
                 int id = vis[sel];
-                if (mode == 1) UseItem(p, id);
+                if (mode == 1)
+                {
+                    actionMenu = true;    // Use / Give / Drop
+                    actIdx = 0;
+                }
                 else BuyOrSell(id);
             }
         }
