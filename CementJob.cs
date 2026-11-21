@@ -193,7 +193,9 @@ public class CementJob : Script
         {
             Vector3 mn, mx;
             pr.Model.GetDimensions(out mn, out mx);
-            Vector3 l = pr.GetOffsetFromWorldCoords(pt);
+            Vector3 l = Function.Call<Vector3>(
+                Hash.GET_OFFSET_FROM_ENTITY_GIVEN_WORLD_COORDS,
+                pr, pt.X, pt.Y, pt.Z);
             float cx = Math.Max(mn.X, Math.Min(l.X, mx.X));
             float cy = Math.Max(mn.Y, Math.Min(l.Y, mx.Y));
             float cz = Math.Max(mn.Z, Math.Min(l.Z, mx.Z));
