@@ -27,7 +27,7 @@ public class CementJob : Script
 
     // true = show model hash + distance of every prop near you (top of screen)
     // stand next to the cement, read the hash, then set back to false
-    const bool DEBUG_PROPS = true;
+    const bool DEBUG_PROPS = false;
 
     // extra spots you can add by hand (x, y, z)
     static readonly Vector3[] ExtraSpots = {
@@ -46,6 +46,8 @@ public class CementJob : Script
     const int COPS_COUNT = 3;
     const int GRACE_SECONDS = 10;          // countdown before tire shooting
     const int TIRE_SHOT_MS = 3500;         // one tire every 3.5 s
+    const double HIT_CHANCE = 0.40;        // 40% chance each shot hits
+    const float COP_ACCURACY = 40f;        // cop aim on foot (0-100)
     const int LOST_SECONDS = 8;            // lose them for 8 s = escaped
     const int JAIL_SECONDS = 10;
 
@@ -178,7 +180,7 @@ public class CementJob : Script
         Function.Call(Hash.REQUEST_ANIM_DICT, dict);
         int tries = 0;
         while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict)
-            && tries++ < 60)
+            && tries++ < 200)
             Script.Yield();
         return Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, dict);
     }
@@ -300,6 +302,27 @@ public class CementJob : Script
         {
             return center.DistanceTo(pt) <= SPOT_RANGE;
         }
+    }
+
+    // "E" key drawn above the cement pile
+    static void DrawWorldPrompt(Vector3 w, string label)
+    {
+        OutputArgument ox = new OutputArgument();
+        OutputArgument oy = new OutputArgument();
+        bool ok = Function.Call<bool>(
+            Hash.GET_SCREEN_COORD_FROM_WORLD_COORD,
+            w.X, w.Y, w.Z + 1.4f, ox, oy);
+        if (!ok) return;
+        float sx = ox.GetResult<float>();
+        float sy = oy.GetResult<float>();
+
+        float bw = 0.024f, bh = 0.043f;
+        Box(sx - bw / 2f - 0.002f, sy - bh / 2f - 0.003f,
+            bw + 0.004f, bh + 0.006f, 0, 0, 0, 200);
+        Box(sx - bw / 2f, sy - bh / 2f, bw, bh, 255, 255, 255, 240);
+        Mid("E", sx, sy - 0.023f, 4, 0.6f, 0, 0, 0, 255);
+        Mid(label, sx, sy + bh / 2f + 0.006f, 4, 0.34f,
+            255, 255, 255, 255);
     }
 
     void DebugProps(Ped p)
@@ -452,16 +475,25 @@ public class CementJob : Script
         stealStart = Game.GameTime;
         policeCalled = false;
 
-        string dict = "amb@world_human_gardener_plant@male@base";
+        // face the pile, then crouch and dig / scoop with it
+        Vector3 d = spotPos - p.Position;
+        p.Heading = (float)(Math.Atan2(-d.X, d.Y) * 180.0 / Math.PI);
+        Function.Call(Hash.CLEAR_PED_TASKS_IMMEDIATELY, p);
+
+        // squat down and grab, repeating (looks like scooping from the pile)
+        string dict = "pickup_object";
         if (LoadDict(dict))
-            Function.Call(Hash.TASK_PLAY_ANIM, p, dict, "base",
-                8f, -8f, -1, 1, 0f, false, false, false);
+            Function.Call(Hash.TASK_PLAY_ANIM, p, dict, "pickup_low",
+                4f, -4f, -1, 1, 0f, false, false, false);
+        else
+            Function.Call(Hash.TASK_START_SCENARIO_IN_PLACE, p,
+                "WORLD_HUMAN_GARDENER_PLANT", 0, true);
     }
 
     void StopStealAnim(Ped p)
     {
-        Function.Call(Hash.STOP_ANIM_TASK, p,
-            "amb@world_human_gardener_plant@male@base", "base", 1f);
+        Function.Call(Hash.STOP_ANIM_TASK, p, "pickup_object",
+            "pickup_low", 1f);
         p.Task.ClearAll();
     }
 
@@ -566,6 +598,8 @@ public class CementJob : Script
                 Function.Call(Hash.SET_CURRENT_PED_WEAPON, both[k],
                     (uint)WeaponHash.StunGun, true);
                 Function.Call(Hash.SET_PED_CAN_SWITCH_WEAPON, both[k], false);
+                Function.Call(Hash.SET_PED_ACCURACY, both[k],
+                    (int)COP_ACCURACY);
             }
             if (drv != null)
             {
@@ -601,13 +635,25 @@ public class CementJob : Script
             Ped[] both = { c.Driver, c.Passenger };
             if (onFoot)
             {
+                float carDist = c.Car.Position.DistanceTo(p.Position);
                 for (int k = 0; k < 2; k++)
                 {
                     Ped x = both[k];
                     if (!Alive(x)) continue;
                     if (x.IsInVehicle())
-                        Function.Call(Hash.TASK_LEAVE_VEHICLE,
-                            x, c.Car, 0);
+                    {
+                        // drive to the player first, get out only when close
+                        bool close = carDist < 30f
+                            || (carDist < 80f && c.Car.Speed < 1.5f);
+                        if (close)
+                            Function.Call(Hash.TASK_LEAVE_VEHICLE,
+                                x, c.Car, 0);
+                        else if (k == 0)
+                            Function.Call(Hash.TASK_VEHICLE_DRIVE_TO_COORD,
+                                x, c.Car, p.Position.X, p.Position.Y,
+                                p.Position.Z, 40f, 1, c.Car.Model.Hash,
+                                786603, 6f, 10f);
+                    }
                     else if (graceOver
                         && x.Position.DistanceTo(p.Position) < 14f)
                         Function.Call(Hash.TASK_SHOOT_AT_ENTITY, x, p,
@@ -684,12 +730,23 @@ public class CementJob : Script
         Ped owner = Alive(shooter.Passenger)
             ? shooter.Passenger : shooter.Driver;
 
+        bool hit = rng.NextDouble() < HIT_CHANCE;
+        if (!hit)
+        {
+            // miss: bullet goes wide, tire stays intact
+            target += new Vector3(
+                (rng.Next(2) == 0 ? -1f : 1f) * (1.5f + (float)rng.NextDouble()),
+                (rng.Next(2) == 0 ? -1f : 1f) * (1.5f + (float)rng.NextDouble()),
+                0f);
+        }
+
         Function.Call(Hash.SHOOT_SINGLE_BULLET_BETWEEN_COORDS,
             src.X, src.Y, src.Z, target.X, target.Y, target.Z,
             1, true, (uint)WeaponHash.StunGun, owner, true, false,
             1000f);
-        Function.Call(Hash.SET_VEHICLE_TYRE_BURST,
-            pv, wheels[pick], true, 1000f);
+        if (hit)
+            Function.Call(Hash.SET_VEHICLE_TYRE_BURST,
+                pv, wheels[pick], true, 1000f);
     }
 
     void EndChase(bool escaped)
@@ -992,8 +1049,7 @@ public class CementJob : Script
 
             if (nearSpot && !Inv.Busy)
             {
-                Mid("Press E - Steal cement", 0.5f, 0.88f, 4, 0.5f,
-                    255, 255, 255, 255);
+                DrawWorldPrompt(spotPos, "Steal cement");
                 if (kE || PadJust(51))
                     StartSkillCheck(spotPos);
             }
