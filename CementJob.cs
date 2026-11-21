@@ -15,15 +15,26 @@ public class CementJob : Script
     static readonly string[] CementModels = {
         "prop_cementbags01",
         "prop_cement_bag_01",
-        "prop_cement_sack"
+        "prop_cement_sack",
+        "prop_cementbags01",
+        "prop_cementbags02",
+        "prop_pallet_pile_01",
+        "prop_pallet_pile_02",
+        "prop_pallet_pile_03"
+        // add the model name you find with DEBUG_PROPS here
     };
+
+    // true = show model hash + distance of every prop near you (top of screen)
+    // stand next to the cement, read the hash, then set back to false
+    const bool DEBUG_PROPS = true;
 
     // extra spots you can add by hand (x, y, z)
     static readonly Vector3[] ExtraSpots = {
         // new Vector3(0f, 0f, 0f),
     };
 
-    const float SPOT_RANGE = 2.5f;
+    const float SPOT_RANGE = 3.0f;         // distance to the EDGE of the prop
+    const float SCAN_RADIUS = 10f;         // how far we look for props
     const int SPOT_COOLDOWN_MS = 90000;    // same spot again after 90 s
 
     const int STEAL_MS = 12000;            // steal time
@@ -174,12 +185,50 @@ public class CementJob : Script
         return ((int)(v.X / 2f)) + "," + ((int)(v.Y / 2f));
     }
 
+    // distance from a point to the nearest edge of the prop's box
+    // (big pallets have their centre far from where you stand)
+    static float EdgeDistance(Prop pr, Vector3 pt)
+    {
+        try
+        {
+            Vector3 mn, mx;
+            pr.Model.GetDimensions(out mn, out mx);
+            Vector3 l = pr.GetOffsetFromWorldCoords(pt);
+            float cx = Math.Max(mn.X, Math.Min(l.X, mx.X));
+            float cy = Math.Max(mn.Y, Math.Min(l.Y, mx.Y));
+            float cz = Math.Max(mn.Z, Math.Min(l.Z, mx.Z));
+            float dx = l.X - cx, dy = l.Y - cy, dz = l.Z - cz;
+            return (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        catch (Exception)
+        {
+            return pr.Position.DistanceTo(pt);
+        }
+    }
+
+    void DebugProps(Ped p)
+    {
+        Prop[] props = World.GetNearbyProps(p.Position, 6f);
+        float y = 0.10f;
+        int shown = 0;
+        for (int i = 0; i < props.Length && shown < 8; i++)
+        {
+            Prop pr = props[i];
+            if (pr == null || !pr.Exists()) continue;
+            Mid("hash " + pr.Model.Hash + "  " + (uint)pr.Model.Hash
+                + "  " + pr.Position.DistanceTo(p.Position).ToString("0.0") + "m",
+                0.5f, y, 4, 0.35f, 255, 255, 0, 255);
+            y += 0.03f;
+            shown++;
+        }
+    }
+
     // ---------- Finding a cement spot ----------
     bool FindSpot(Ped p, out Vector3 pos)
     {
         pos = Vector3.Zero;
 
-        Prop[] props = World.GetNearbyProps(p.Position, SPOT_RANGE);
+        Prop[] props = World.GetNearbyProps(p.Position, SCAN_RADIUS);
         for (int i = 0; i < props.Length; i++)
         {
             Prop pr = props[i];
@@ -187,7 +236,8 @@ public class CementJob : Script
             int mh = pr.Model.Hash;
             for (int k = 0; k < modelHashes.Length; k++)
             {
-                if (modelHashes[k] == mh)
+                if (modelHashes[k] != mh) continue;
+                if (EdgeDistance(pr, p.Position) <= SPOT_RANGE)
                 {
                     pos = pr.Position;
                     return true;
@@ -743,8 +793,16 @@ public class CementJob : Script
     void OnTick(object sender, EventArgs e)
     {
         try { Tick2(); }
-        catch (Exception) { }
+        catch (Exception ex)
+        {
+            if (Game.GameTime > nextErr)
+            {
+                nextErr = Game.GameTime + 5000;
+                Msg("CementJob error: " + ex.Message);
+            }
+        }
     }
+    int nextErr;
 
     void Tick2()
     {
@@ -805,6 +863,8 @@ public class CementJob : Script
                     }
                 }
             }
+
+            if (DEBUG_PROPS) DebugProps(p);
 
             if (nearSpot && !Inv.Busy)
             {
