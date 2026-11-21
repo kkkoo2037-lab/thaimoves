@@ -271,6 +271,37 @@ public class CementJob : Script
         return true;
     }
 
+    // same as EdgeDistance but works from a raw entity handle (natives only)
+    static bool HandleNear(int handle, Vector3 pt, out Vector3 center)
+    {
+        center = Vector3.Zero;
+        try
+        {
+            if (!Function.Call<bool>(Hash.DOES_ENTITY_EXIST, handle))
+                return false;
+            center = Function.Call<Vector3>(
+                Hash.GET_ENTITY_COORDS, handle, true);
+            int model = Function.Call<int>(Hash.GET_ENTITY_MODEL, handle);
+            OutputArgument a = new OutputArgument();
+            OutputArgument b = new OutputArgument();
+            Function.Call(Hash.GET_MODEL_DIMENSIONS, model, a, b);
+            Vector3 mn = a.GetResult<Vector3>();
+            Vector3 mx = b.GetResult<Vector3>();
+            Vector3 l = Function.Call<Vector3>(
+                Hash.GET_OFFSET_FROM_ENTITY_GIVEN_WORLD_COORDS,
+                handle, pt.X, pt.Y, pt.Z);
+            float cx = Math.Max(mn.X, Math.Min(l.X, mx.X));
+            float cy = Math.Max(mn.Y, Math.Min(l.Y, mx.Y));
+            float cz = Math.Max(mn.Z, Math.Min(l.Z, mx.Z));
+            float dx = l.X - cx, dy = l.Y - cy, dz = l.Z - cz;
+            return Math.Sqrt(dx * dx + dy * dy + dz * dz) <= SPOT_RANGE;
+        }
+        catch (Exception)
+        {
+            return center.DistanceTo(pt) <= SPOT_RANGE;
+        }
+    }
+
     void DebugProps(Ped p)
     {
         Prop[] props = World.GetNearbyProps(p.Position, 6f);
@@ -321,11 +352,10 @@ public class CementJob : Script
                 p.Position.X, p.Position.Y, p.Position.Z,
                 SCAN_RADIUS, all[i], false, false, false);
             if (handle == 0) continue;
-            Prop pr = new Prop(handle);
-            if (!pr.Exists()) continue;
-            if (EdgeDistance(pr, p.Position) <= SPOT_RANGE)
+            Vector3 hp;
+            if (HandleNear(handle, p.Position, out hp))
             {
-                pos = pr.Position;
+                pos = hp;
                 return true;
             }
         }
