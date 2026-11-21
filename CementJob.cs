@@ -84,6 +84,7 @@ public class CementJob : Script
     int nextScan;
     bool nearSpot;
     bool cementHere;
+    int eHold;
 
     // skill check
     float cursor;
@@ -269,7 +270,7 @@ public class CementJob : Script
             File.WriteAllLines(LearnFile, lines.ToArray());
         }
         catch (Exception) { saved = " (this session only)"; }
-        Msg("Learned cement model " + best.Model.Hash + saved);
+        Msg("Cement spot saved (" + best.Model.Hash + ")" + saved);
         return true;
     }
 
@@ -305,16 +306,18 @@ public class CementJob : Script
     }
 
     // "E" key drawn above the cement pile
-    static void DrawWorldPrompt(Vector3 w, string label)
+    static bool DrawWorldPrompt(Vector3 w, string label)
     {
         OutputArgument ox = new OutputArgument();
         OutputArgument oy = new OutputArgument();
         bool ok = Function.Call<bool>(
             Hash.GET_SCREEN_COORD_FROM_WORLD_COORD,
             w.X, w.Y, w.Z + 1.4f, ox, oy);
-        if (!ok) return;
+        if (!ok) return false;
         float sx = ox.GetResult<float>();
         float sy = oy.GetResult<float>();
+        if (sx < 0.02f || sx > 0.98f || sy < 0.05f || sy > 0.92f)
+            return false;
 
         float bw = 0.024f, bh = 0.043f;
         Box(sx - bw / 2f - 0.002f, sy - bh / 2f - 0.003f,
@@ -323,6 +326,7 @@ public class CementJob : Script
         Mid("E", sx, sy - 0.023f, 4, 0.6f, 0, 0, 0, 255);
         Mid(label, sx, sy + bh / 2f + 0.006f, 4, 0.34f,
             255, 255, 255, 255);
+        return true;
     }
 
     void DebugProps(Ped p)
@@ -1038,6 +1042,17 @@ public class CementJob : Script
                 }
             }
 
+            bool eDown = (GetAsyncKeyState(InteractKey) & 0x8000) != 0
+                || Function.Call<bool>(Hash.IS_CONTROL_PRESSED, 0, 51);
+            if (!eDown || cementHere || p.IsInVehicle()) eHold = 0;
+            else if (eHold == 0) eHold = now;
+            else if (eHold > 0 && now - eHold > 1500)
+            {
+                eHold = -1;   // wait until E is released
+                if (LearnNearest(p)) nextScan = 0;
+                else Msg("No cement found - stand touching the pile");
+            }
+
             if (DEBUG_PROPS && !cementHere && !p.IsInVehicle())
             {
                 DebugProps(p);
@@ -1049,7 +1064,9 @@ public class CementJob : Script
 
             if (nearSpot && !Inv.Busy)
             {
-                DrawWorldPrompt(spotPos, "Steal cement");
+                if (!DrawWorldPrompt(spotPos, "Steal cement"))
+                    Mid("Press E - Steal cement", 0.5f, 0.88f, 4, 0.5f,
+                        255, 255, 255, 255);
                 if (kE || PadJust(51))
                     StartSkillCheck(spotPos);
             }
