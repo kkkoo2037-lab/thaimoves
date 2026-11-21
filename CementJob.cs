@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using GTA;
 using GTA.Math;
@@ -80,6 +81,7 @@ public class CementJob : Script
     string spotKey = "";
     int nextScan;
     bool nearSpot;
+    bool cementHere;
 
     // skill check
     float cursor;
@@ -113,6 +115,7 @@ public class CementJob : Script
         for (int i = 0; i < CementModels.Length; i++)
             modelHashes[i] = Function.Call<int>(
                 Hash.GET_HASH_KEY, CementModels[i]);
+        LoadLearned();
         lastTick = Game.GameTime;
         Tick += OnTick;
     }
@@ -208,6 +211,66 @@ public class CementJob : Script
         }
     }
 
+    HashSet<int> learned = new HashSet<int>();
+
+    static string LearnFile
+    {
+        get
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                "scripts", "CementModels.txt");
+        }
+    }
+
+    void LoadLearned()
+    {
+        try
+        {
+            if (!File.Exists(LearnFile)) return;
+            foreach (string line in File.ReadAllLines(LearnFile))
+            {
+                int h;
+                if (int.TryParse(line.Trim(), out h)) learned.Add(h);
+            }
+        }
+        catch (Exception) { }
+    }
+
+    // picks the biggest prop touching you and remembers its model as cement
+    bool LearnNearest(Ped p)
+    {
+        Prop best = null;
+        float bv = -1f;
+        Prop[] props = World.GetNearbyProps(p.Position, 8f);
+        for (int i = 0; i < props.Length; i++)
+        {
+            Prop pr = props[i];
+            if (pr == null || !pr.Exists()) continue;
+            if (EdgeDistance(pr, p.Position) > 2.0f) continue;
+            try
+            {
+                Vector3 mn, mx;
+                pr.Model.GetDimensions(out mn, out mx);
+                float v = (mx.X - mn.X) * (mx.Y - mn.Y) * (mx.Z - mn.Z);
+                if (v > bv) { bv = v; best = pr; }
+            }
+            catch (Exception) { }
+        }
+        if (best == null) return false;
+
+        learned.Add(best.Model.Hash);
+        string saved = " (saved)";
+        try
+        {
+            List<string> lines = new List<string>();
+            foreach (int h in learned) lines.Add(h.ToString());
+            File.WriteAllLines(LearnFile, lines.ToArray());
+        }
+        catch (Exception) { saved = " (this session only)"; }
+        Msg("Learned cement model " + best.Model.Hash + saved);
+        return true;
+    }
+
     void DebugProps(Ped p)
     {
         Prop[] props = World.GetNearbyProps(p.Position, 6f);
@@ -236,14 +299,34 @@ public class CementJob : Script
             Prop pr = props[i];
             if (pr == null || !pr.Exists()) continue;
             int mh = pr.Model.Hash;
-            for (int k = 0; k < modelHashes.Length; k++)
+            bool isCement = learned.Contains(mh);
+            for (int k = 0; k < modelHashes.Length && !isCement; k++)
+                if (modelHashes[k] == mh) isCement = true;
+            if (!isCement) continue;
+            if (EdgeDistance(pr, p.Position) <= SPOT_RANGE)
             {
-                if (modelHashes[k] != mh) continue;
-                if (EdgeDistance(pr, p.Position) <= SPOT_RANGE)
-                {
-                    pos = pr.Position;
-                    return true;
-                }
+                pos = pr.Position;
+                return true;
+            }
+        }
+
+        // second way to find the same models (catches map-placed objects
+        // that the normal prop list can miss)
+        List<int> all = new List<int>(modelHashes);
+        all.AddRange(learned);
+        for (int i = 0; i < all.Count; i++)
+        {
+            int handle = Function.Call<int>(
+                Hash.GET_CLOSEST_OBJECT_OF_TYPE,
+                p.Position.X, p.Position.Y, p.Position.Z,
+                SCAN_RADIUS, all[i], false, false, false);
+            if (handle == 0) continue;
+            Prop pr = new Prop(handle);
+            if (!pr.Exists()) continue;
+            if (EdgeDistance(pr, p.Position) <= SPOT_RANGE)
+            {
+                pos = pr.Position;
+                return true;
             }
         }
 
@@ -853,8 +936,10 @@ public class CementJob : Script
                 nextScan = now + 300;
                 Vector3 pos;
                 nearSpot = false;
+                cementHere = false;
                 if (!p.IsInVehicle() && !chase && FindSpot(p, out pos))
                 {
+                    cementHere = true;
                     int until;
                     string key = KeyOf(pos);
                     if (!cooldown.TryGetValue(key, out until)
@@ -866,7 +951,14 @@ public class CementJob : Script
                 }
             }
 
-            if (DEBUG_PROPS) DebugProps(p);
+            if (DEBUG_PROPS && !cementHere && !p.IsInVehicle())
+            {
+                DebugProps(p);
+                Mid("LEARN MODE: stand touching the cement, press E",
+                    0.5f, 0.88f, 4, 0.45f, 255, 255, 0, 255);
+                if ((kE || PadJust(51)) && LearnNearest(p))
+                    nextScan = 0;
+            }
 
             if (nearSpot && !Inv.Busy)
             {
