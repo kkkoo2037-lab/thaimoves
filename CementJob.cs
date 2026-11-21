@@ -14,16 +14,9 @@ public class CementJob : Script
     // ===== Settings =====
     // cement props in the map (nearby props with these models = a spot)
     static readonly string[] CementModels = {
-        "prop_cementbags01",
-        "prop_cement_bag_01",
-        "prop_cement_sack",
-        "prop_cementbags01",
-        "prop_cementbags02",
-        "prop_pallet_pile_01",
-        "prop_pallet_pile_02",
-        "prop_pallet_pile_03"
-        // add the model name you find with DEBUG_PROPS here
+        "prop_cementbags01"        // Cement Bags Pallet #1
     };
+    const int CementBagsHash = 0x71325391;   // prop_cementbags01
 
     // true = show model hash + distance of every prop near you (top of screen)
     // stand next to the cement, read the hash, then set back to false
@@ -114,11 +107,11 @@ public class CementJob : Script
 
     public CementJob()
     {
-        modelHashes = new int[CementModels.Length];
+        modelHashes = new int[CementModels.Length + 1];
         for (int i = 0; i < CementModels.Length; i++)
             modelHashes[i] = Function.Call<int>(
                 Hash.GET_HASH_KEY, CementModels[i]);
-        LoadLearned();
+        modelHashes[CementModels.Length] = CementBagsHash;
         lastTick = Game.GameTime;
         Tick += OnTick;
     }
@@ -1040,17 +1033,6 @@ public class CementJob : Script
                         spotPos = pos;
                     }
                 }
-            }
-
-            bool eDown = (GetAsyncKeyState(InteractKey) & 0x8000) != 0
-                || Function.Call<bool>(Hash.IS_CONTROL_PRESSED, 0, 51);
-            if (!eDown || cementHere || p.IsInVehicle()) eHold = 0;
-            else if (eHold == 0) eHold = now;
-            else if (eHold > 0 && now - eHold > 1500)
-            {
-                eHold = -1;   // wait until E is released
-                if (LearnNearest(p)) nextScan = 0;
-                else Msg("No cement found - stand touching the pile");
             }
 
             if (DEBUG_PROPS && !cementHere && !p.IsInVehicle())
