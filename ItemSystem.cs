@@ -18,8 +18,9 @@ public static class Inv
     public const int Revive = 6;
     public const int Money = 7;       // always in the bag, = the game's money
     public const int RepairBox = 8;
+    public const int Cement = 9;      // stolen at the cement spots (CementJob)
 
-    public static int[] Qty = new int[9];
+    public static int[] Qty = new int[10];
     public static bool Dirty;
     public static bool WantBandage;
     public static bool WantArmor;
@@ -55,7 +56,7 @@ public class ItemSystem : Script
     static readonly string[] Names = {
         "Bandage", "Body Armor", "Medkit",
         "Water", "Burger", "Energy Drink", "Revive Kit",
-        "Money", "Repair Box"
+        "Money", "Repair Box", "Cement Bag"
     };
     static readonly string[] Desc = {
         "Heals 60 HP over time (L3 / H)",
@@ -66,20 +67,21 @@ public class ItemSystem : Script
         "Adds 30% to the stamina bar",
         "Revives a dead person (CPR 10s)",
         "Your money (same as the game money)",
-        "Repairs a car (stand in front of the hood)"
+        "Repairs a car (stand in front of the hood)",
+        "Stolen cement - sell it at a shop"
     };
-    static readonly int[] Cat = { 1, 2, 1, 3, 3, 3, 1, 4, 4 };
+    static readonly int[] Cat = { 1, 2, 1, 3, 3, 3, 1, 4, 4, 4 };
     static readonly string[] CatNames = {
         "ALL", "MEDICAL", "ARMOR", "FOOD", "MISC"
     };
-    static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60, 1000, 0, 800 };
-    static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20, 300, 0, 300 };
+    static readonly int[] BuyPrice = { 150, 500, 300, 20, 40, 60, 1000, 0, 800, 0 };
+    static readonly int[] SellPrice = { 50, 150, 100, 5, 10, 20, 300, 0, 300, 800 };
     // money can not be bought; only cheap / unimportant things can be thrown away
-    static readonly bool[] Shoppable = { true, true, true, true, true, true, true, false, true };
-    static readonly bool[] Droppable = { false, false, false, true, true, true, false, false, false };
+    static readonly bool[] Shoppable = { true, true, true, true, true, true, true, false, true, false };
+    static readonly bool[] Droppable = { false, false, false, true, true, true, false, false, false, false };
     const int GiveMoneyStep = 500;     // $ given with the 'Give' button
     static readonly int[] QtyOptions = { 1, 5, 10 };
-    static readonly float[] Weight = { 0.5f, 3.0f, 1.5f, 0.5f, 0.4f, 0.4f, 1.0f, 0f, 2.0f };
+    static readonly float[] Weight = { 0.5f, 3.0f, 1.5f, 0.5f, 0.4f, 0.4f, 1.0f, 0f, 2.0f, 8.0f };
     const float MaxWeight = 50f;
 
     static float TotalWeight()
@@ -197,6 +199,18 @@ public class ItemSystem : Script
             "RRRWRRWRRR",
             "RRRRRRRRRR",
             "RRRRRRRRRR",
+            ".........."
+        },
+        new string[] {   // cement bag
+            "..........",
+            ".NNNNNNNN.",
+            "NWWWWWWWWN",
+            "NBBBBBBBBN",
+            "NWWWWWWWWN",
+            "NWWBBBBWWN",
+            "NWWWWWWWWN",
+            "NRRRRRRRRN",
+            ".NNNNNNNN.",
             ".........."
         },
     };
@@ -433,6 +447,10 @@ public class ItemSystem : Script
         else if (id == Inv.RepairBox)
         {
             TryRepair(p);
+        }
+        else if (id == Inv.Cement)
+        {
+            Msg("Sell cement at a shop");
         }
     }
 
@@ -839,6 +857,7 @@ public class ItemSystem : Script
         { "n_6", new float[] { 77f, 22f } },
         { "n_7", new float[] { 27f, 22f } },
         { "n_8", new float[] { 85f, 22f } },
+        { "n_9", new float[] { 70f, 22f } },
         { "d_0", new float[] { 106f, 16f } },
         { "d_1", new float[] { 64f, 16f } },
         { "d_2", new float[] { 98f, 16f } },
@@ -848,6 +867,7 @@ public class ItemSystem : Script
         { "d_6", new float[] { 161f, 16f } },
         { "d_7", new float[] { 151f, 16f } },
         { "d_8", new float[] { 151f, 16f } },
+        { "d_9", new float[] { 135f, 16f } },
         { "a_use", new float[] { 48f, 22f } },
         { "a_give", new float[] { 21f, 22f } },
         { "a_drop", new float[] { 21f, 22f } },
@@ -868,6 +888,7 @@ public class ItemSystem : Script
         { "l_qty", new float[] { 41f, 17f } },
         { "m_nobuy", new float[] { 91f, 17f } },
     };
+
     const string LBLDIR = "scripts\\PinkUI\\lbl\\";
 
     // Thai text picture. align 0 left, 1 centre, 2 right. y = top of picture
