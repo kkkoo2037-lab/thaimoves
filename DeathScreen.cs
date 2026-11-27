@@ -44,6 +44,12 @@ public class DeathScreen : Script
     // from starting its respawn over and over = the looping sound)
     static bool PAUSE_RESTART = true;
 
+    // How long you stay REALLY dead (milliseconds). After that you get up
+    // lying on the ground (can not move) and the timer keeps running.
+    // The game's death sound is made for a few seconds; staying dead for
+    // 30 minutes makes it glitch. 0 = stay really dead the whole time.
+    static int DEAD_HOLD_MS = 1500;
+
     // respawn point (Central Los Santos Medical Center)
     static readonly Vector3 Hospital = new Vector3(341.0f, -1397.3f, 32.5f);
     const float HospitalHeading = 48.5f;
@@ -58,6 +64,7 @@ public class DeathScreen : Script
     bool globalSaved;      // Global_5 trick (see SuppressRespawn)
     int savedGlobal;
     bool release;          // mission active: let the game handle this death
+    bool hybrid;           // dead for a moment, now lying down alive
     int nextAudio;
     int fxStop1, fxStop2;
     int nextSnap;
@@ -109,6 +116,11 @@ public class DeathScreen : Script
                     case "kill_wasted_screen": KILL_WASTED_SCREEN = b; break;
                     case "stop_death_audio": STOP_DEATH_AUDIO = b; break;
                     case "pause_restart": PAUSE_RESTART = b; break;
+                    case "dead_hold_ms":
+                        if (int.TryParse(v, NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out n) && n >= 0)
+                            DEAD_HOLD_MS = n;
+                        break;
                     case "respawn_seconds":
                         if (int.TryParse(v, NumberStyles.Integer,
                             CultureInfo.InvariantCulture, out n) && n > 0)
@@ -372,6 +384,27 @@ public class DeathScreen : Script
         Function.Call(Hash.SET_FADE_OUT_AFTER_ARREST, false);
     }
 
+    // after the short real death: get up, but stay on the ground
+    void ReviveIntoDowned(Ped p)
+    {
+        Log("real death over -> lying down (timer keeps running)");
+        p.Resurrect();
+        Function.Call(Hash.SET_ENTITY_COLLISION, p, true, false);
+        p.Task.ClearAllImmediately();
+        Function.Call(Hash.ANIMPOSTFX_STOP_ALL);
+        Function.Call(Hash.CLEAR_TIMECYCLE_MODIFIER);
+        Function.Call(Hash.STOP_AUDIO_SCENE, "DEATH_SCENE");
+        Function.Call(Hash.STOP_AUDIO_SCENE, "REPLAY_SCREEN_SCENE");
+        if (Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT))
+            Function.Call(Hash.DO_SCREEN_FADE_IN, 300);
+        Protect(p, true);
+        p.Health = HoldHealth(p);
+        RestoreRespawn();                  // the game is alive again
+        Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, false);
+        RestoreHud(p);
+        hybrid = true;                     // dead = true, Downed = true stay
+    }
+
     void GoDead(int now)
     {
         // a mission is running: let the game handle this death itself
@@ -596,6 +629,13 @@ public class DeathScreen : Script
 
         int now = Game.GameTime;
 
+        if (hybrid)                       // lying down after the short death
+        {
+            TickDowned(p, now);
+            if (!dead) hybrid = false;
+            return;
+        }
+
         if (!REAL_DEATH)
         {
             TickDowned(p, now);
@@ -640,6 +680,13 @@ public class DeathScreen : Script
         if (remain <= 0)
         {
             RespawnAtHospital(p);
+            return;
+        }
+
+        // dead long enough (like NoWastedScreen): get up, lie on the ground
+        if (!NOWASTED_ASI && DEAD_HOLD_MS > 0 && now - downStart >= DEAD_HOLD_MS)
+        {
+            ReviveIntoDowned(p);
             return;
         }
 
