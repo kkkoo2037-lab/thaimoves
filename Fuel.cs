@@ -129,6 +129,21 @@ public class FuelSys : Script
         Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, NX(x), y / DH, 0);
     }
 
+    // right aligned text (x = right edge)
+    static void PTR(string s, float x, float y, float scale,
+        int r, int g, int b)
+    {
+        Function.Call(Hash.SET_TEXT_FONT, 4);
+        Function.Call(Hash.SET_TEXT_SCALE, 0f, scale);
+        Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, 255);
+        Function.Call(Hash.SET_TEXT_DROP_SHADOW);
+        Function.Call(Hash.SET_TEXT_JUSTIFICATION, 2);
+        Function.Call(Hash.SET_TEXT_WRAP, 0f, NX(x));
+        Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, s);
+        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, 0f, y / DH, 0);
+    }
+
     static void Msg(string t)
     {
         GTA.UI.Screen.ShowSubtitle(t, 2500);
@@ -152,18 +167,47 @@ public class FuelSys : Script
         }
     }
 
+    // How close the pump must be to the car (metres). Like in real life:
+    // park NEXT to the pump, along the side of the car.
+    const float PUMP_SIDE_MAX = 2.0f;     // gap between car side and pump
+    const float PUMP_LENGTH_EXTRA = 0.6f; // how far past the car's front / back
+    const float STOP_SPEED = 0.6f;        // m/s, the car must be (almost) stopped
+
+    static void ModelBox(Vehicle v, out Vector3 min, out Vector3 max)
+    {
+        OutputArgument a = new OutputArgument();
+        OutputArgument b = new OutputArgument();
+        Function.Call(Hash.GET_MODEL_DIMENSIONS, v.Model.Hash, a, b);
+        min = a.GetResult<Vector3>();
+        max = b.GetResult<Vector3>();
+    }
+
+    // true only when a pump stands right beside the car's body
     bool PumpNear(Vehicle v)
     {
+        Vector3 mn, mx;
+        ModelBox(v, out mn, out mx);
+        float halfW = (mx.X - mn.X) / 2f;
+        float halfL = (mx.Y - mn.Y) / 2f;
+        float cx = (mx.X + mn.X) / 2f, cy = (mx.Y + mn.Y) / 2f;
         Vector3 pos = v.Position;
+
         for (int i = 0; i < pumpHash.Length; i++)
         {
             int h = Function.Call<int>(Hash.GET_CLOSEST_OBJECT_OF_TYPE,
-                pos.X, pos.Y, pos.Z, 7f, pumpHash[i], false, false, false);
-            if (h != 0) return true;
+                pos.X, pos.Y, pos.Z, 9f, pumpHash[i], false, false, false);
+            if (h == 0) continue;
+
+            Vector3 w = Function.Call<Vector3>(Hash.GET_ENTITY_COORDS, h, true);
+            Vector3 loc = Function.Call<Vector3>(
+                Hash.GET_OFFSET_FROM_ENTITY_GIVEN_WORLD_COORDS,
+                v, w.X, w.Y, w.Z);
+
+            float side = Math.Abs(loc.X - cx) - halfW;     // gap to the side of the car
+            float along = Math.Abs(loc.Y - cy) - halfL;    // beyond front / back
+            if (side <= PUMP_SIDE_MAX && along <= PUMP_LENGTH_EXTRA)
+                return true;
         }
-        // pumps not streamed in: use the station position
-        foreach (Vector3 s in Stations)
-            if (pos.DistanceTo(s) < 14f) return true;
         return false;
     }
 
@@ -201,11 +245,11 @@ public class FuelSys : Script
 
         if (now > nextPumpCheck)
         {
-            nextPumpCheck = now + 400;
+            nextPumpCheck = now + 150;
             nearPump = PumpNear(v);
         }
 
-        bool still = v.Speed < 2.5f;
+        bool still = v.Speed < STOP_SPEED;
 
         // ---------- using fuel ----------
         if (!fueling && v.Driver == p && v.IsEngineRunning)
@@ -253,7 +297,7 @@ public class FuelSys : Script
                 tank[v.Handle] = f;
                 Function.Call(Hash.SET_VEHICLE_ENGINE_ON, v, false, true, true);
 
-                DrawPrompt("FUELING   $" + paid, f / TANK, "E  STOP");
+                DrawFuelBar(f / TANK, f, paid);
                 if (f >= TANK - 0.01f)
                 {
                     Msg("Tank full");
@@ -290,6 +334,46 @@ public class FuelSys : Script
                 Function.Call(Hash.SET_VEHICLE_ENGINE_ON, v, true, true, false);
             if (paid > 0) Msg("Paid $" + paid);
         }
+    }
+
+    // green fuelling bar: smooth tube, % in the middle, litres and money
+    void DrawFuelBar(float frac, float litres, int money)
+    {
+        if (frac < 0f) frac = 0f; if (frac > 1f) frac = 1f;
+        float w = 320f, h = 74f;
+        float x = 640f - w / 2f, y = 540f;
+
+        // frame
+        PR(x - 2f, y - 2f, w + 4f, h + 4f, 50, 230, 70, 255);
+        PR(x, y, w, h, 8, 12, 10, 240);
+
+        PT("FUELING", x + 14f, y + 5f, 0.36f, 235, 255, 240, false);
+        PTR("$" + money, x + w - 14f, y + 5f, 0.36f, 255, 205, 90);
+        PT(((int)Math.Round(litres)) + " / " + (int)TANK + " L",
+            x + 14f, y + h - 18f, 0.26f, 150, 210, 160, false);
+
+        // bar
+        float bx = x + 14f, by = y + 28f, bw = w - 28f, bh = 18f;
+        PR(bx - 1f, by - 1f, bw + 2f, bh + 2f, 40, 70, 52, 255);   // rim
+        PR(bx, by, bw, bh, 14, 22, 18, 255);                       // track
+        const int N = 40;
+        float sw = bw / N;
+        for (int i = 0; i < N; i++)
+        {
+            float lit = frac * N - i;
+            if (lit <= 0f) break;
+            if (lit > 1f) lit = 1f;
+            float t = i / (float)(N - 1);
+            int r = (int)(30 + 100 * t);
+            int g = (int)(190 + 65 * t);
+            int b = (int)(50 + 50 * t);
+            PR(bx + i * sw, by, sw * lit + 0.6f, bh, r, g, b, 255);
+        }
+        PR(bx, by, bw * frac, bh * 0.32f, 255, 255, 255, 40);      // shine
+        PT((int)Math.Round(frac * 100f) + "%", 640f, by - 1f, 0.34f,
+            255, 255, 255, true);
+
+        PTR("E  STOP", x + w - 14f, y + h - 18f, 0.22f, 200, 220, 205);
     }
 
     // text pill above the vehicle HUD
