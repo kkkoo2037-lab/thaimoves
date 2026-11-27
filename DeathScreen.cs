@@ -55,6 +55,9 @@ public class DeathScreen : Script
 
     bool dead;
     int nextKill;
+    bool globalSaved;      // Global_5 trick (see SuppressRespawn)
+    int savedGlobal;
+    bool release;          // mission active: let the game handle this death
     int nextAudio;
     int fxStop1, fxStop2;
     int nextSnap;
@@ -334,28 +337,60 @@ public class DeathScreen : Script
     }
 
     // ---------- Dead / alive ----------
+    // ---- the trick used by NoWastedScreen: kill the game's respawn script
+    // ---- AND set Global_5 to 4 so the game does not start it again
+    // ---- (killing it alone makes the game restart it every frame = the
+    // ---- flicker and the looping sound)
+    void SuppressRespawn()
+    {
+        if (!globalSaved)
+        {
+            savedGlobal = GlobalVariable.Get(5).Read<int>();
+            globalSaved = true;
+        }
+        Function.Call((Hash)0x4C68DDDDF0097317UL, "respawn_controller", 3);
+        Function.Call(Hash.TERMINATE_ALL_SCRIPTS_WITH_THIS_NAME,
+            "respawn_controller");
+        GlobalVariable.Get(5).Write<int>(4);
+        Function.Call(Hash.IGNORE_NEXT_RESTART, true);
+        Function.Call((Hash)0xC0AA53F866B3134DUL);
+        Function.Call(Hash.SET_TIME_SCALE, 1f);
+        Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
+        Function.Call(Hash.SET_FADE_OUT_AFTER_ARREST, false);
+    }
+
+    void RestoreRespawn()
+    {
+        if (!globalSaved) return;
+        GlobalVariable.Get(5).Write<int>(savedGlobal);
+        globalSaved = false;
+        Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, false);
+        Function.Call(Hash.IGNORE_NEXT_RESTART, false);
+        Function.Call((Hash)0xC0AA53F866B3134DUL);
+        Function.Call(Hash.SET_TIME_SCALE, 1f);
+        Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
+        Function.Call(Hash.SET_FADE_OUT_AFTER_ARREST, false);
+    }
+
     void GoDead(int now)
     {
+        // a mission is running: let the game handle this death itself
+        if (!NOWASTED_ASI && Function.Call<bool>(Hash.GET_MISSION_FLAG))
+        {
+            release = true;
+            Log("dead during a mission - released to the game");
+            return;
+        }
+
         dead = true;
         Downed = true;
         downStart = now;
-        nextKill = 0;
-        KillRespawnScript(now);
         Log("dead at " + now + " (nowasted=" + NOWASTED_ASI + ")");
+        Game.Player.IsInvincible = false;
         if (PAUSE_RESTART)
             Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, true);
-        if (NOWASTED_ASI) return;   // NoWasted handles the rest
-
-        // ONE time only (calling these every frame makes the WASTED
-        // banner / sound restart over and over)
-        Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, true);
-        Function.Call(Hash.IGNORE_NEXT_RESTART, true);
-        Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
-        Function.Call(Hash.SET_FADE_OUT_AFTER_ARREST, false);
-
-        // remove the grey WASTED screen effect twice, once each
-        fxStop1 = now + 800;
-        fxStop2 = now + 2500;
+        if (NOWASTED_ASI) return;   // NoWasted.asi handles the rest
+        SuppressRespawn();
     }
 
     // scripts\DeathScreen.log - short notes for bug reports
@@ -385,6 +420,7 @@ public class DeathScreen : Script
         Function.Call(Hash.CLEAR_TIMECYCLE_MODIFIER);
         if (!NOWASTED_ASI || PAUSE_RESTART)
             Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, false);
+        if (!NOWASTED_ASI) RestoreRespawn();
         Log("alive again");
         fxStop1 = fxStop2 = 0;
         if (Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT))
@@ -396,27 +432,43 @@ public class DeathScreen : Script
     {
         busy = true;
 
-        Function.Call(Hash.DO_SCREEN_FADE_OUT, 700);
-        int t = Game.GameTime + 1500;
+        Function.Call(Hash.DO_SCREEN_FADE_OUT, 1200);
+        int t = Game.GameTime + 2500;
         while (!Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT)
             && Game.GameTime < t)
+        {
+            if (!NOWASTED_ASI) SuppressRespawn();
             Script.Yield();
+        }
 
-        Function.Call(Hash.RESURRECT_PED, p);
+        if (!NOWASTED_ASI) SuppressRespawn();
+        p.Resurrect();
+        Function.Call(Hash.SET_ENTITY_COLLISION, p, true, false);
         p.Task.ClearAllImmediately();
         if (p.IsInVehicle())
             Function.Call(Hash.TASK_LEAVE_VEHICLE, p, p.CurrentVehicle, 16);
         Function.Call(Hash.SET_ENTITY_COORDS_NO_OFFSET, p,
             Hospital.X, Hospital.Y, Hospital.Z, false, false, false);
         p.Heading = HospitalHeading;
+        Function.Call(Hash.SET_ENTITY_VELOCITY, p, 0f, 0f, 0f);
         p.Health = p.MaxHealth;
+        p.IsVisible = true;
+        Game.Player.IsInvincible = true;          // until the fade in is done
         Function.Call(Hash.CLEAR_AREA_OF_PEDS,
             Hospital.X, Hospital.Y, Hospital.Z, 3f, 0);
-        EndDead(p);
 
-        Script.Wait(400);
-        Function.Call(Hash.DO_SCREEN_FADE_IN, 900);
+        // fade in while we still hold the game's respawn script down
+        Function.Call(Hash.DO_SCREEN_FADE_IN, 1000);
+        int t2 = Game.GameTime + 1500;
+        while (Game.GameTime < t2)
+        {
+            if (!NOWASTED_ASI) SuppressRespawn();
+            p.Health = p.MaxHealth;
+            Script.Yield();
+        }
 
+        Game.Player.IsInvincible = false;
+        EndDead(p);                               // also gives Global_5 back
         busy = false;
         Msg("You were treated at the hospital");
     }
@@ -551,16 +603,27 @@ public class DeathScreen : Script
         }
 
         // ---------- real death ----------
-        KillRespawnScript(now);
+        if (release)                 // died in a mission: the game does it
+        {
+            if (!p.IsDead) release = false;
+            return;
+        }
 
         if (!dead)
         {
             if (!p.IsDead)
             {
                 SnapshotWeapons(p, now);
+                if (!NOWASTED_ASI)
+                {
+                    // the game must not fade the screen out when we die
+                    Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
+                    Function.Call(Hash.SET_FADE_OUT_AFTER_ARREST, false);
+                }
                 return;
             }
             GoDead(now);
+            if (!dead) return;       // released to the game
         }
 
         // someone revived us (CarryRevive resurrects the body)
@@ -571,6 +634,8 @@ public class DeathScreen : Script
             return;
         }
 
+        if (!NOWASTED_ASI) SuppressRespawn();
+
         int remain = RESPAWN_SECONDS * 1000 - (now - downStart);
         if (remain <= 0)
         {
@@ -578,16 +643,11 @@ public class DeathScreen : Script
             return;
         }
 
-        if (!NOWASTED_ASI)
-        {
-            if (fxStop1 != 0 && now >= fxStop1) { fxStop1 = 0; StopDeathFx(); }
-            if (fxStop2 != 0 && now >= fxStop2) { fxStop2 = 0; StopDeathFx(); }
-        }
-
         if (STOP_DEATH_AUDIO && now > nextAudio)
         {
             nextAudio = now + 300;
             Function.Call(Hash.STOP_AUDIO_SCENE, "DEATH_SCENE");
+            Function.Call(Hash.STOP_AUDIO_SCENE, "REPLAY_SCREEN_SCENE");
         }
 
         DrawUi(remain, now);
