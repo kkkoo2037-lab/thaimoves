@@ -44,11 +44,14 @@ public class DeathScreen : Script
     // from starting its respawn over and over = the looping sound)
     static bool PAUSE_RESTART = true;
 
+    // mute harder: stop EVERY audio scene each 0.3 s while you are dead
+    static bool STOP_ALL_SCENES = false;
+
     // How long you stay REALLY dead (milliseconds). After that you get up
     // lying on the ground (can not move) and the timer keeps running.
     // The game's death sound is made for a few seconds; staying dead for
     // 30 minutes makes it glitch. 0 = stay really dead the whole time.
-    static int DEAD_HOLD_MS = 1500;
+    static int DEAD_HOLD_MS = 0;
 
     // respawn point (Central Los Santos Medical Center)
     static readonly Vector3 Hospital = new Vector3(341.0f, -1397.3f, 32.5f);
@@ -116,6 +119,7 @@ public class DeathScreen : Script
                     case "kill_wasted_screen": KILL_WASTED_SCREEN = b; break;
                     case "stop_death_audio": STOP_DEATH_AUDIO = b; break;
                     case "pause_restart": PAUSE_RESTART = b; break;
+                    case "stop_all_audio_scenes": STOP_ALL_SCENES = b; break;
                     case "dead_hold_ms":
                         if (int.TryParse(v, NumberStyles.Integer,
                             CultureInfo.InvariantCulture, out n) && n >= 0)
@@ -695,6 +699,7 @@ public class DeathScreen : Script
             nextAudio = now + 300;
             Function.Call(Hash.STOP_AUDIO_SCENE, "DEATH_SCENE");
             Function.Call(Hash.STOP_AUDIO_SCENE, "REPLAY_SCREEN_SCENE");
+            if (STOP_ALL_SCENES) Function.Call(Hash.STOP_AUDIO_SCENES);
         }
 
         DrawUi(remain, now);
